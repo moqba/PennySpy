@@ -23,3 +23,50 @@ bank = RBCBank()
 bank.get_session_cookies()
 bank.download_transactions(software=Software.CSV, account_info=AccountInfo.PRIMARY_CHECKING, include=Include.ALL_OPERATIONS)
 ```
+
+# API
+#### `POST /scrape`
+
+Initiate a transaction download for a specified RBC account and software format.
+
+**Request Body:**
+
+| Field         | Type      | Description                                                        | Allowed Values                                                                         |
+|---------------|-----------|--------------------------------------------------------------------|----------------------------------------------------------------------------------------|
+| software      | string    | Target software format for export                                  | QUICKEN, MAKISOFT, QUICKBOOKS, MONEY, MAKISOFT_COMPTABILITY, SIMPLY_ACCOUNTING, CSV    |
+| account_info  | string    | Account(s) to include                                              | A, B, VALL, C001, C002
+| include       | string    | Which operations to include                                        | N, A
+
+**Example Request:**
+
+
+### Software
+
+| Name                   | Value             | Extension |
+|------------------------|-------------------|-----------|
+| QUICKEN                | "QUICKEN"         | .ofx      |
+| MAKISOFT               | "MAKISOFT"        | .afx      |
+| QUICKBOOKS             | "QUICKBOOKS"      | .qbo      |
+| MONEY                  | "MONEY"           | .ofx      |
+| MAKISOFT_COMPTABILITY  | "MAKISOFTB"       | .afx      |
+| SIMPLY_ACCOUNTING      | "SIMPLYACCOUNTING"| .aso      |
+| CSV                    | "EXCEL"           | .csv      |
+
+### AccountInfo
+
+| Name                | Value    |
+|---------------------|----------|
+| ALL_ACCOUNTS        | "A"      |
+| CHECKING_ACCOUNTS   | "B"      |
+| CREDIT_ACCOUNTS     | "VALL"   |
+| PRIMARY_CHECKING    | "C001"   |
+| SECONDARY_CHECKING  | "C002"   |
+
+### Include
+
+| Name            | Value |
+|-----------------|-------|
+| NEW_OPERATIONS  | "N"   |
+| ALL_OPERATIONS  | "A"   |
+
+---
