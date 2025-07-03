@@ -1,8 +1,0 @@
-#!/bin/bash
-
-echo "Starting pennyspy api..."
-while true; do
-    pennyspy api
-    echo "pennyspy api crashed with code $? — restarting in 5s..."
-    sleep 5
-done

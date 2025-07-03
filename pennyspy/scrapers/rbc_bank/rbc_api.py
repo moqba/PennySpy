@@ -15,27 +15,9 @@ app = FastAPI()
 API_PORT = int(get_required_env_var("PORT"))
 
 class DownloadRequest(BaseModel):
-    software: str
-    account_info: str
-    include: str
-
-    @field_validator("software")
-    @classmethod
-    def software_validator(cls, v):
-        if v not in Software.__members__:
-            raise ValueError(f"'{v}' is not a valid software. Must be one of {list(Software.__members__.keys())}")
-
-    @field_validator("account_info")
-    @classmethod
-    def account_info_validator(cls, v):
-        if v not in AccountInfo.__members__:
-            raise ValueError(f"'{v}' is not a valid account info. Must be one of {list(AccountInfo.__members__.keys())}")
-
-    @field_validator("include")
-    @classmethod
-    def include_validator(cls, v):
-        if v not in Include.__members__:
-            raise ValueError(f"'{v}' is not a include. Must be one of {list(Include.__members__.keys())}")
+    software: Software
+    account_info: AccountInfo
+    include: Include
 
 
 @app.get("/")
@@ -45,14 +27,11 @@ def read_root():
 @app.post("/scrape")
 async def scrape_transactions(request: DownloadRequest):
     logger.info(request)
-    software = Software[request.software]
-    account_info = AccountInfo[request.account_info]
-    include = Include[request.include]
-    logger.info("Got scrape request for RBC with software : %s, account info : %s, include : %s", software, account_info, include)
+    logger.info("Got scrape request for RBC with software : %s, account info : %s, include : %s", request.software, request.account_info, request.include)
     bank = RBCBank()
     bank.get_session_cookies()
     try:
-        transaction_file = bank.download_transactions(software=software, account_info=account_info, include=include)
+        transaction_file = bank.download_transactions(software=request.software, account_info=request.account_info, include=request.include)
     except Exception as e:
         raise HTTPException(status_code=404, detail=e)
     if not transaction_file.exists():
