@@ -57,8 +57,17 @@ class RBCBank(Scraper):
             pass
 
     def _wait_until_connected(self):
+        try:
+            WebDriverWait(self.driver, DelaySeconds.PAGE_TIMEOUT).until(EC.url_contains("rbc-mfa-app"), message="Was not able to log in user.")
+        except TimeoutException as e:
+            self._save_screenshot("login_failure")
+            raise TimeoutException from e
         logger.info("waiting for 2FA...")
-        WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(EC.url_contains("summary"), message="Timeout waiting for 2FA")
+        try:
+            WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(EC.url_contains("summary"), message="Timeout waiting for 2FA")
+        except TimeoutException as e:
+            self._save_screenshot("timeout_2fa")
+            raise TimeoutException from e
         logger.info("Connected.")
 
     def download_transactions(self, software: Software, account_info: AccountInfo, include: Include, export_directory: Path | str | None = None) -> Path | None:

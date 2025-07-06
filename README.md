@@ -8,9 +8,10 @@ Bank scrapper to fetch and download your transaction history files
 ### usage
 The following env variables are required :
 ```dotenv
-FETCHER_USER="rbc_username"
-FETCHER_PASSWORD="rbc_password"
+PENNYSPY_RBCU="rbc_username"
+PENNYSPY_RBCP="rbc_password"
 ```
+it is recommended to make an `.env` file containing these.
 ### 2FA
 When prompting connection user has 5 minutes to accept the 2FA on mobile device to allow the script to connect.
 
@@ -31,6 +32,23 @@ user can launch the API after installing the python package as such :
 ```shell
 pennyspy_api
 ```
+
+# Docker
+Pennyspy api is also available as a Docker image ready to be run in your own custom environment.
+## Launch container using Docker Compose
+You can use the `docker-compose.yml` file included in the repository to run the latest stable version of the API.
+To create and run the container, you should use an `.env` file for your credentials or pass directly the credentials under the docker-compose file:
+```shell
+docker compose up --detach
+```
+
+## Launch container using docker command
+It is possible, alternatively, to use docker using this command.
+```shell
+docker run --restart=unless-stopped -d -p 5056:5056 -v YOUR/PATH/TO/DATA:/pennyspy --name pennyspy moqba/pennyspy:latest
+```
+
+
 ## RBC
 #### `POST rbc/scrape`
 
