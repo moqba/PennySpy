@@ -1,0 +1,19 @@
+services:
+  pennyspy:
+    image: docker.io/moqba/pennyspy:latest
+    environment:
+      # Uncomment any of the lines below to set configuration options
+      # - PENNYSPY_PORT=5056
+      # user can set these in the .env file
+      # - PENNYSPY_RBCU=user
+      # - PENNYSPY_RBCP=hunter123
+      # !! If you are not using any of these options, remove the 'environment:' tag entirely.
+    env_file:
+      - .env
+    volumes:
+      - "./pennyspy-data:/pennyspy"
+    ports:
+      # Makes pennyspy api available at port 5056 of the device you run the server on,
+      # You can change the first number to change the port.
+      - '5056:5056'
+    restart: unless-stopped
