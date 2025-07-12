@@ -7,7 +7,7 @@ from setuptools import find_packages
 setup(
     name='pennyspy',
     description='Scrape transaction history from banks',
-    version='0.3',
+    version='0.3.1',
     author="Mohcine Qbaich",
     author_email='randeomcom@gmail.com',
     url='https://github.com/moqba/PennySpy',

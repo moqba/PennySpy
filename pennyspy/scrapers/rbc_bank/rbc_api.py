@@ -24,9 +24,9 @@ async def scrape_transactions(request: RbcDownloadRequest, background_tasks: Bac
     logger.info(request)
     logger.info("Got scrape request for RBC with software : %s, account info : %s, include : %s", request.software, request.account_info, request.include)
     bank = RBCBank()
-    bank.get_session_cookies()
     tmp_dirname = tempfile.mkdtemp()
     try:
+        bank.get_session_cookies()
         transaction_file = bank.download_transactions(software=request.software, account_info=request.account_info, include=request.include, export_directory=tmp_dirname)
     except Exception as e:
         shutil.rmtree(tmp_dirname)

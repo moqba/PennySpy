@@ -35,6 +35,7 @@ class RBCBank(Scraper):
         self.driver.get(RBC_MAINPAGE)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         self._login(USERNAME, PASSWORD)
+        self._check_for_wrong_login()
         self._accept_cookies_if_visible()
         self._wait_until_connected()
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
@@ -56,19 +57,27 @@ class RBCBank(Scraper):
         except TimeoutException:
             pass
 
+    def _check_for_wrong_login(self):
+        try:
+            WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING.value).until(EC.presence_of_element_located((By.ID, ConnectionElementId.WRONG_USER_PROMPT)))
+        except TimeoutException as _:
+            return
+        raise ValueError("Username and password seems to be invalid, failed to connect.")
+
+
     def _wait_until_connected(self):
-        try:
-            WebDriverWait(self.driver, DelaySeconds.PAGE_TIMEOUT).until(EC.url_contains("rbc-mfa-app"), message="Was not able to log in user.")
-        except TimeoutException as e:
-            self._save_screenshot("login_failure")
-            raise TimeoutException from e
-        logger.info("waiting for 2FA...")
-        try:
-            WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(EC.url_contains("summary"), message="Timeout waiting for 2FA")
-        except TimeoutException as e:
-            self._save_screenshot("timeout_2fa")
-            raise TimeoutException from e
-        logger.info("Connected.")
+            try:
+                WebDriverWait(self.driver, DelaySeconds.PAGE_TIMEOUT).until(EC.url_contains("rbc-mfa-app"), message="Was not able to log in user.")
+            except TimeoutException as e:
+                self._save_screenshot("login_failure")
+                raise TimeoutException from e
+            logger.info("waiting for 2FA...")
+            try:
+                WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(EC.url_contains("summary"), message="Timeout waiting for 2FA")
+            except TimeoutException as e:
+                self._save_screenshot("timeout_2fa")
+                raise TimeoutException from e
+            logger.info("Connected.")
 
     def download_transactions(self, software: Software, account_info: AccountInfo, include: Include, export_directory: Path | str | None = None) -> Path | None:
         assert self.cookies is not None, "Cookies have not been fetched yet, cannot download transactions. Please fetch cookies first."
