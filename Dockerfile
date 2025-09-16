@@ -28,7 +28,12 @@ RUN curl -sSL ${CHROME_LINK}/chrome-linux64.zip -o /tmp/chrome.zip \
 RUN google-chrome --version
 RUN chromedriver --version
 
+ENV CHROME_USER_DATA_DIR=/chrome/user-data
+RUN mkdir -p $CHROME_USER_DATA_DIR && chmod -R 777 $CHROME_USER_DATA_DIR
+
+
 WORKDIR /pennyspy
-RUN pip install git+https://github.com/moqba/PennySpy
+COPY . .
+RUN pip install .
 
 ENTRYPOINT ["pennyspy_api"]
