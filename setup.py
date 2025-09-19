@@ -14,6 +14,9 @@ setup(
     license='MIT',
     packages=find_packages(include=['pennyspy', 'pennyspy.*']),
     install_requires=['requests', 'selenium', 'chromedriver', 'fake-useragent', 'fastapi', 'pydantic', 'uvicorn'],
+    extras_require={
+        'dev': ['pytest',]
+    },
     python_requires='>=3.11',
     entry_points={
         "console_scripts": [
