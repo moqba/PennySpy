@@ -27,7 +27,7 @@ Pennyspy can be installed a python package :
 `pip install git+https://github.com/moqba/PennySpy`  
 This allows you to run the scraper directly in Python :
 ```python
-# This example is for RBC bank scrapper, for more details about RBC setup consult the RBC bank section
+# This example is for RBC bank scraper, for more details about RBC setup consult the RBC bank section
 from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
 from pennyspy.scrapers.rbc_bank.request_options import Software, AccountInfo, Include
 
