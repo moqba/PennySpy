@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PennySpy</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .landing-footer {
+      text-align: center;
+      margin-top: 40px;
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .bank-card__name--rbc { color: var(--rbc-blue); }
+    .bank-card__name--ws  { color: var(--ws-green); }
+
+    .eyebrow {
+      font-size: 10px;
+      letter-spacing: 0.3em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      text-align: center;
+      margin-bottom: 12px;
+    }
+  </style>
+</head>
+<body class="page">
+  <div class="container">
+
+    <header class="site-header">
+      <div class="eyebrow">Financial Intelligence Toolkit</div>
+      <h1 class="site-title">PennySpy</h1>
+      <p class="site-subtitle">Bank Transaction Exporter &nbsp;//&nbsp; v1.0</p>
+    </header>
+
+    <div class="bank-cards">
+
+      <a href="rbc.html" class="bank-card bank-card--rbc">
+        <span class="bank-card__badge">Single-Step</span>
+        <span class="bank-card__name bank-card__name--rbc">RBC<br>Bank</span>
+        <span class="bank-card__desc">Export transactions in OFX, QBO, CSV and more via mobile 2FA</span>
+        <span class="bank-card__arrow">→</span>
+      </a>
+
+      <a href="ws.html" class="bank-card bank-card--ws">
+        <span class="bank-card__badge">2FA / OTP</span>
+        <span class="bank-card__name bank-card__name--ws">Wealth<br>Simple</span>
+        <span class="bank-card__desc">Export activity history as CSV with two-factor authentication</span>
+        <span class="bank-card__arrow">→</span>
+      </a>
+
+    </div>
+
+    <p class="landing-footer">Credentials are read from server environment &nbsp;//&nbsp; Local use only</p>
+  </div>
+</body>
+</html>

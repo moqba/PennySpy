@@ -1,0 +1,35 @@
+from enum import StrEnum
+
+
+class ActivityField(StrEnum):
+    FROM = "From"
+    TO = "To"
+    DATE = "Date"
+    AMOUNT = "Amount"
+    ORIGINAL_AMOUNT = "Original amount"
+    ACCOUNT = "Account"
+    STATUS = "Status"
+    SUBMITTED = "Submitted"
+    FILLED = "Filled"
+    TYPE = "Type"
+    LIMIT_PRICE = "Limit price"
+    ENTERED_QUANTITY = "Entered quantity"
+    FILLED_QUANTITY = "Filled quantity"
+    EXCHANGE_RATE = "Exchange rate"
+    ESTIMATED_TOTAL_COST = "Estimated total cost"
+    TOTAL_COST = "Total cost"
+    TOTAL = "Total"
+    GROSS_DIVIDEND_RATE = "Gross dividend rate"
+    NET_DIVIDEND_AMOUNT = "Net dividend amount"
+    WITHHOLDING_TAX = "Withholding tax"
+    HOLDINGS_ON_RECORD_DATE = "Holdings on record date"
+    TRADING_SESSION = "Trading session"
+    EMAIL = "Email"
+    FREQUENCY = "Frequency"
+    MESSAGE = "Message"
+    SOURCE = "Source"
+    # Synthetic fields populated from button header, not region HTML
+    TICKER = "Ticker"
+    BUTTON_PAYEE = "Button payee"
+    BUTTON_AMOUNT = "Button amount"
+
