@@ -1,6 +1,9 @@
 # Usage
+> [!important]
 The scraper is only compatible with users using mobile 2FA. If your RBC is setup with SMS 2FA, there is no current integration for this method.
 When prompting connection user has 5 minutes to accept the 2FA on mobile device to allow the script to connect.
+Message-based 2FA is a potential future enhancement, though not a priority at this time.
+>
 
 Regardless of the installation method, the following env variables are required :
 ```dotenv
