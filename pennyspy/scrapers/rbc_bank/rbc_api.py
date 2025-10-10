@@ -9,9 +9,11 @@ from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
 from pennyspy.scrapers.rbc_bank.request_options import Software, Include, AccountInfo
 
 from logging import getLogger
+
 logger = getLogger(__name__)
 
 router = APIRouter()
+
 
 class RbcDownloadRequest(BaseModel):
     software: Software
@@ -19,15 +21,17 @@ class RbcDownloadRequest(BaseModel):
     include: Include
 
 
-@router.post("/scrape")
+@router.get("/scrape")
 async def scrape_transactions(request: RbcDownloadRequest, background_tasks: BackgroundTasks):
     logger.info(request)
-    logger.info("Got scrape request for RBC with software : %s, account info : %s, include : %s", request.software, request.account_info, request.include)
+    logger.info("Got scrape request for RBC with software : %s, account info : %s, include : %s", request.software,
+                request.account_info, request.include)
     bank = RBCBank()
     tmp_dirname = tempfile.mkdtemp()
     try:
         bank.get_session_cookies()
-        transaction_file = bank.download_transactions(software=request.software, account_info=request.account_info, include=request.include, export_directory=tmp_dirname)
+        transaction_file = bank.download_transactions(software=request.software, account_info=request.account_info,
+                                                      include=request.include, export_directory=tmp_dirname)
     except Exception as e:
         shutil.rmtree(tmp_dirname)
         raise HTTPException(status_code=404, detail=str(e))

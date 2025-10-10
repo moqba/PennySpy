@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from pennyspy.scrapers.rbc_bank import rbc_api
 
 from logging import getLogger
+
 logger = getLogger(__name__)
 
 app = FastAPI()
@@ -22,9 +23,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
 @app.get("/")
 def read_root():
     return {"message": "PennySpy API"}
+
 
 def run():
     uvicorn.run("pennyspy.pennyspy_api:app", host="0.0.0.0", port=API_PORT)

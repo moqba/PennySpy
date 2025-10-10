@@ -13,7 +13,7 @@ PENNYSPY_RBCP="rbc_password"
 it is recommended to make an `.env` file containing these.
 
 ## RBC API
-#### `POST rbc/scrape`
+#### `GET rbc/scrape`
 
 Initiate a transaction download for a specified RBC account and software format.
 The body is in JSON.
