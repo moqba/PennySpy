@@ -1,7 +1,7 @@
 import shutil
 import tempfile
 
-from fastapi import HTTPException, APIRouter, BackgroundTasks
+from fastapi import HTTPException, APIRouter, BackgroundTasks, Depends
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -15,23 +15,23 @@ logger = getLogger(__name__)
 router = APIRouter()
 
 
-class RbcDownloadRequest(BaseModel):
+class RbcDownloadParams(BaseModel):
     software: Software
     account_info: AccountInfo
     include: Include
 
 
 @router.get("/scrape")
-async def scrape_transactions(request: RbcDownloadRequest, background_tasks: BackgroundTasks):
-    logger.info(request)
-    logger.info("Got scrape request for RBC with software : %s, account info : %s, include : %s", request.software,
-                request.account_info, request.include)
+async def scrape_transactions(params: RbcDownloadParams = Depends(), background_tasks: BackgroundTasks = None):
+    logger.info(params)
+    logger.info("Got scrape request for RBC with software : %s, account info : %s, include : %s", params.software,
+                params.account_info, params.include)
     bank = RBCBank()
     tmp_dirname = tempfile.mkdtemp()
     try:
         bank.get_session_cookies()
-        transaction_file = bank.download_transactions(software=request.software, account_info=request.account_info,
-                                                      include=request.include, export_directory=tmp_dirname)
+        transaction_file = bank.download_transactions(software=params.software, account_info=params.account_info,
+                                                      include=params.include, export_directory=tmp_dirname)
     except Exception as e:
         shutil.rmtree(tmp_dirname)
         raise HTTPException(status_code=404, detail=str(e))
