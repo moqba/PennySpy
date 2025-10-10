@@ -16,15 +16,14 @@ it is recommended to make an `.env` file containing these.
 #### `GET rbc/scrape`
 
 Initiate a transaction download for a specified RBC account and software format.
-The body is in JSON.
 
-**Request Body:**
+**Querry Parameters:**
 
-| Field         | Type      | Description                                                        | Allowed Values                                                                         |
-|---------------|-----------|--------------------------------------------------------------------|----------------------------------------------------------------------------------------|
-| software      | string    | Target software format for export                                  | QUICKEN, MAKISOFT, QUICKBOOKS, MONEY, MAKISOFT_COMPTABILITY, SIMPLY_ACCOUNTING, CSV    |
-| account_info  | string    | Account(s) to include                                              | A, B, VALL, C001, C002
-| include       | string    | Which operations to include                                        | N, A
+| Name         | Type      | Description                                                        | Allowed Values                                                                         |
+|--------------|-----------|--------------------------------------------------------------------|----------------------------------------------------------------------------------------|
+| software     | string    | Target software format for export                                  | QUICKEN, MAKISOFT, QUICKBOOKS, MONEY, MAKISOFT_COMPTABILITY, SIMPLY_ACCOUNTING, CSV    |
+| account_info | string    | Account(s) to include                                              | A, B, VALL, C001, C002
+| include      | string    | Which operations to include                                        | N, A
 
 **Options:**
 
