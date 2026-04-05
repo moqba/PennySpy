@@ -6,6 +6,7 @@
 Canadian bank transaction scraper with API endpoints for automated retrieval of transaction history. Can be self-hosted on your computer directly via a Docker image or accessed directly through Python for seamless integration.
 # Supported banks
 - RBC bank
+- Wealthsimple
 
 # Installation
 ## Docker
@@ -53,6 +54,8 @@ See the bank’s setup page for API call details.
 
 # Setup
 For RBC bank setup and API details, consult the [RBC setup guide](pennyspy/scrapers/rbc_bank/setup.md).
+
+For Wealthsimple setup and API details, consult the [Wealthsimple setup guide](pennyspy/scrapers/wealthsimple/setup.md).
 
 
 

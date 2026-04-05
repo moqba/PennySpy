@@ -11,9 +11,15 @@ services:
     env_file:
       - .env
     volumes:
-      - "./pennyspy-data:/pennyspy"
+      - "./pennyspy-data:/app/data"
     ports:
       # Makes pennyspy api available at port 5056 of the device you run the server on,
       # You can change the first number to change the port.
       - '5056:5056'
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os,urllib.request,sys; port=os.environ.get('PENNYSPY_PORT','5056'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/docs', timeout=3).status==200 else 1)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3

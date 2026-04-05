@@ -26,17 +26,19 @@ async def scrape_transactions(params: RbcDownloadParams = Depends(), background_
     logger.info(params)
     logger.info("Got scrape request for RBC with software : %s, account info : %s, include : %s", params.software,
                 params.account_info, params.include)
-    bank = RBCBank()
-    tmp_dirname = tempfile.mkdtemp()
     try:
+        bank = RBCBank()
+        tmp_dirname = tempfile.mkdtemp()
         bank.get_session_cookies()
         transaction_file = bank.download_transactions(software=params.software, account_info=params.account_info,
                                                       include=params.include, export_directory=tmp_dirname)
     except Exception as e:
+        bank.driver.quit()
         shutil.rmtree(tmp_dirname)
         raise HTTPException(status_code=404, detail=str(e))
     if not transaction_file.exists():
         shutil.rmtree(tmp_dirname)
         raise HTTPException(status_code=404, detail="Transaction file is not found")
     background_tasks.add_task(shutil.rmtree, tmp_dirname)
+    bank.driver.quit()
     return FileResponse(path=transaction_file, filename=transaction_file.name, media_type="application/octet-stream")

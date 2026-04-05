@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>RBC — PennySpy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="page">
+  <div class="container">
+
+    <a href="index.html" class="back-link">Home</a>
+
+    <div class="card">
+      <div class="card__header">
+        <span class="card__badge card__badge--rbc">RBC</span>
+        <div>
+          <h1 class="page-title">Royal Bank</h1>
+          <p class="page-subtitle">Select export options — approve 2FA on your mobile device when prompted</p>
+        </div>
+      </div>
+
+      <div class="form-block">
+        <div class="form-group">
+          <label class="form-label" for="software">Export Format</label>
+          <select id="software" class="select">
+            <option value="EXCEL">CSV &mdash; Excel / Spreadsheet</option>
+            <option value="QUICKEN">OFX &mdash; Quicken</option>
+            <option value="QUICKBOOKS">QBO &mdash; QuickBooks</option>
+            <option value="MONEY">OFX &mdash; Microsoft Money</option>
+            <option value="MAKISOFT">AFX &mdash; Makisoft</option>
+            <option value="MAKISOFTB">AFX &mdash; Makisoft Comptability</option>
+            <option value="SIMPLYACCOUNTING">ASO &mdash; Simply Accounting</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="account_info">Account</label>
+          <select id="account_info" class="select">
+            <option value="A">All Accounts</option>
+            <option value="B">Checking Accounts</option>
+            <option value="VALL">Credit Accounts</option>
+            <option value="C001">Primary Checking</option>
+            <option value="C002">Secondary Checking</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="include">Transactions</label>
+          <select id="include" class="select">
+            <option value="N">New Only</option>
+            <option value="A">All Transactions</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="fetch-btn" class="btn btn--primary btn--full btn--mt">
+        Download Transactions
+      </button>
+
+      <p class="info-row">Browser automation will open — approve 2FA on your RBC mobile app within 5 minutes</p>
+
+      <div id="status" hidden></div>
+    </div>
+
+  </div>
+  <script src="rbc.js"></script>
+</body>
+</html>

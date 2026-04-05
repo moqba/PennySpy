@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
@@ -19,8 +20,10 @@ FALLBACK_USER_AGENTS: Final[list[str]] = [
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
 ]
 
+
 class Scraper:
     def __init__(self, headless=True):
+        self.driver = None
         self.init_chrome_driver(headless)
 
     def init_chrome_driver(self, headless):
@@ -33,14 +36,26 @@ class Scraper:
             options.add_argument('--headless=new')
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        user_data_dir = Path(os.environ.get("CHROME_USER_DATA_DIR", tempfile.mkdtemp()))
-        user_data_dir.mkdir(parents=True, exist_ok=True)
+        parent = os.environ.get("CHROME_USER_DATA_DIR")
+        if parent:
+            Path(parent).mkdir(parents=True, exist_ok=True)
+            user_data_dir = Path(tempfile.mkdtemp(dir=parent))
+        else:
+            user_data_dir = Path(tempfile.mkdtemp())
+        self._user_data_dir = user_data_dir
         options.add_argument(f"--user-data-dir={user_data_dir}")
         options.add_argument("--disable-gpu")
         options.add_argument("--disable-software-rasterizer")
         options.add_argument(f"user-agent={self._get_random_user_agent()}")
         self.driver = webdriver.Chrome(options=options)
         self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+    def quit(self):
+        try:
+            if self.driver is not None:
+                self.driver.quit()
+        finally:
+            shutil.rmtree(self._user_data_dir, ignore_errors=True)
 
     def _get_random_user_agent(self):
         try:

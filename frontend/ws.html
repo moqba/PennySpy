@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Wealthsimple — PennySpy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="page">
+  <div class="container">
+
+    <a href="index.html" class="back-link">Home</a>
+
+    <div class="card">
+      <div class="card__header">
+        <span class="card__badge card__badge--ws">WS</span>
+        <div>
+          <h1 class="page-title">Wealthsimple</h1>
+          <p class="page-subtitle">Two-step login required — OTP sent to your registered device</p>
+        </div>
+      </div>
+
+      <!-- ── Step 1 ─────────────────────────────────────────────── -->
+      <div class="form-group">
+        <label class="form-label" for="since_date">Export Since</label>
+        <select id="since_date" class="select">
+          <!-- Populated by ws.js -->
+        </select>
+      </div>
+
+      <button id="login-btn" class="btn btn--primary btn--full btn--mt">
+        Start Login
+      </button>
+
+      <p class="info-row">Browser automation will open — sign into Wealthsimple, then enter the OTP below</p>
+
+      <!-- ── Step 2 (hidden until login initiated) ─────────────── -->
+      <div id="otp-section" hidden>
+        <div class="divider"></div>
+
+        <p class="step-label">
+          <span class="step-badge">Step 2</span>
+          Check your Wealthsimple app or email for the one-time passcode, then enter it below.
+        </p>
+
+        <div class="form-group">
+          <label class="form-label" for="otp_code">One-Time Passcode (OTP)</label>
+          <input
+            id="otp_code"
+            class="input-otp"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="8"
+            placeholder="e.g. 123456"
+            autocomplete="one-time-code"
+            spellcheck="false"
+          >
+        </div>
+
+        <button id="fetch-btn" class="btn btn--primary btn--full btn--mt">
+          Download Activity
+        </button>
+      </div>
+
+      <div id="status" hidden></div>
+    </div>
+
+  </div>
+  <script src="ws.js"></script>
+</body>
+</html>
