@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>BMO — PennySpy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="page">
+  <div class="container">
+
+    <a href="index.html" class="back-link">Home</a>
+
+    <div class="card">
+      <div class="card__header">
+        <span class="card__badge card__badge--bmo">BMO</span>
+        <div>
+          <h1 class="page-title">BMO Bank</h1>
+          <p class="page-subtitle">Two-step login required — OTP sent to your registered phone</p>
+        </div>
+      </div>
+
+      <p class="step-label">
+        <span class="step-badge">Step 1</span>
+        Enter your export options and click Start Login — BMO will send an OTP to your phone.
+      </p>
+
+      <div class="form-block">
+        <div class="form-group">
+          <label class="form-label" for="account_uuid">Account UUID</label>
+          <input id="account_uuid" class="input-otp" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" spellcheck="false" autocomplete="off">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="app_type">Export Format</label>
+          <select id="app_type" class="select">
+            <option value="csv">CSV &mdash; Excel / Spreadsheet</option>
+            <option value="msmoney">OFX &mdash; Microsoft Money</option>
+            <option value="quicken">QFX &mdash; Quicken</option>
+            <option value="quickbooks">QBO &mdash; QuickBooks</option>
+            <option value="simplyacc">ASO &mdash; Simply Accounting</option>
+          </select>
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="statement_date">Statement Period</label>
+          <select id="statement_date" class="select">
+            <option value="recent">Recent</option>
+            <option value="all">All Transactions</option>
+          </select>
+        </div>
+      </div>
+
+      <button id="login-btn" class="btn btn--primary btn--full btn--mt">
+        Start Login
+      </button>
+
+      <!-- ── Step 2 (hidden until login initiated) ─────────────── -->
+      <div id="otp-section" hidden>
+        <div class="divider"></div>
+
+        <p class="step-label">
+          <span class="step-badge">Step 2</span>
+          Check your phone for the one-time passcode sent by BMO, then enter it below.
+        </p>
+
+        <div class="form-group">
+          <label class="form-label" for="otp_code">One-Time Passcode (OTP)</label>
+          <input
+            id="otp_code"
+            class="input-otp"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="8"
+            placeholder="e.g. 123456"
+            autocomplete="one-time-code"
+            spellcheck="false"
+          >
+        </div>
+
+        <button id="fetch-btn" class="btn btn--primary btn--full btn--mt">
+          Download Transactions
+        </button>
+      </div>
+
+      <div id="status" hidden></div>
+
+      <div id="qfx-filter-section" hidden>
+        <div class="divider"></div>
+        <p class="step-label">
+          <span class="step-badge">Filter</span>
+          Adjust the date range to download a filtered file.
+        </p>
+        <div class="filter-dates">
+          <div class="form-group">
+            <label class="form-label" for="filter-start">Start Date</label>
+            <input id="filter-start" class="input-otp" type="date">
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="filter-end">End Date</label>
+            <input id="filter-end" class="input-otp" type="date">
+          </div>
+        </div>
+        <p id="filter-summary" class="info-row"></p>
+        <button id="filter-download-btn" class="btn btn--primary btn--full btn--mt">
+          Download Filtered File
+        </button>
+      </div>
+    </div>
+
+  </div>
+  <script src="qfx-filter.js"></script>
+  <script src="bmo.js"></script>
+</body>
+</html>

@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from pennyspy.scrapers.bmo_bank import bmo_api
 from pennyspy.scrapers.rbc_bank import rbc_api
 from pennyspy.scrapers.wealthsimple import ws_api
 
@@ -15,6 +16,7 @@ from logging import getLogger
 logger = getLogger(__name__)
 
 app = FastAPI()
+app.include_router(bmo_api.router, prefix="/bmo", tags=["BMO"])
 app.include_router(rbc_api.router, prefix="/rbc", tags=["RBC"])
 app.include_router(ws_api.router, prefix="/ws", tags=["Wealthsimple"])
 

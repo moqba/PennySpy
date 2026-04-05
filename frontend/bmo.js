@@ -11,44 +11,23 @@ const getCookie = (name) => {
   return match ? decodeURIComponent(match[1]) : null;
 };
 
-let sessionId    = null;
-let isLoggingIn  = false;
-let isFetching   = false;
-let cachedCsvText = null;
+const APP_TYPE_EXTENSION = {
+  csv:        'csv',
+  msmoney:    'ofx',
+  quicken:    'qfx',
+  quickbooks: 'qbo',
+  simplyacc:  'aso',
+};
 
-const loginBtn      = document.getElementById('login-btn');
-const fetchBtn      = document.getElementById('fetch-btn');
-const otpSection    = document.getElementById('otp-section');
-const statusEl      = document.getElementById('status');
-const sinceDateEl   = document.getElementById('since_date');
-const otpInput      = document.getElementById('otp_code');
-const accountSection = document.getElementById('account-section');
-const accountSelect  = document.getElementById('account-select');
-const downloadBtn    = document.getElementById('download-btn');
+let sessionId   = null;
+let isLoggingIn = false;
+let isFetching  = false;
 
-// ── Populate since_date options ───────────────────────────────────
-(function buildDateOptions() {
-  const now = new Date();
-  const options = [
-    { label: 'Last 1 month',  months: 1  },
-    { label: 'Last 3 months', months: 3  },
-    { label: 'Last 6 months', months: 6  },
-    { label: 'Last 1 year',   months: 12 },
-    { label: 'Last 2 years',  months: 24 },
-  ];
-  options.forEach(({ label, months }) => {
-    const d = new Date(now);
-    d.setMonth(d.getMonth() - months);
-    const value = d.toISOString().split('T')[0];
-    const opt = new Option(`${label}  (since ${value})`, value);
-    sinceDateEl.appendChild(opt);
-  });
-
-  const savedIndex = parseInt(getCookie('ws_since_index'), 10);
-  if (!isNaN(savedIndex) && savedIndex >= 0 && savedIndex < sinceDateEl.options.length) {
-    sinceDateEl.selectedIndex = savedIndex;
-  }
-})();
+const loginBtn   = document.getElementById('login-btn');
+const fetchBtn   = document.getElementById('fetch-btn');
+const otpSection = document.getElementById('otp-section');
+const statusEl   = document.getElementById('status');
+const otpInput   = document.getElementById('otp_code');
 
 // ── Beforeunload guard ────────────────────────────────────────────
 window.addEventListener('beforeunload', (e) => {
@@ -62,13 +41,26 @@ window.addEventListener('beforeunload', (e) => {
 loginBtn.addEventListener('click', async () => {
   if (isLoggingIn || isFetching) return;
 
-  setCookie('ws_since_index', sinceDateEl.selectedIndex);
+  const account_uuid = document.getElementById('account_uuid').value.trim();
+
+  if (!account_uuid) {
+    showStatus('error', 'Account UUID is required');
+    return;
+  }
+
+  setCookie('bmo_account_uuid',   account_uuid);
+  setCookie('bmo_app_type',       document.getElementById('app_type').value);
+  setCookie('bmo_statement_date', document.getElementById('statement_date').value);
 
   setLoggingIn(true);
-  showStatus('loading', 'Opening Wealthsimple login — complete sign-in in the browser window…');
+  showStatus('loading', 'Opening BMO login — browser automation is running…');
 
   try {
-    const res = await fetch(`${BASE}/ws/login`, { method: 'POST' });
+    const res = await fetch(`${BASE}/bmo/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ account_uuid }),
+    });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: `HTTP ${res.status} — ${res.statusText}` }));
@@ -80,7 +72,7 @@ loginBtn.addEventListener('click', async () => {
 
     otpSection.hidden = false;
     otpInput.focus();
-    showStatus('success', 'Login initiated — enter the OTP sent to your device below.');
+    showStatus('success', 'Login initiated — enter the OTP sent to your phone below.');
   } catch (err) {
     showStatus('error', err.message);
     resetFlow();
@@ -89,12 +81,13 @@ loginBtn.addEventListener('click', async () => {
   }
 });
 
-// ── Step 2: OTP + Fetch ───────────────────────────────────────────
+// ── Step 2: OTP + Download ────────────────────────────────────────
 fetchBtn.addEventListener('click', async () => {
   if (isFetching) return;
 
-  const otpCode   = otpInput.value.trim();
-  const sinceDate = sinceDateEl.value;
+  const otpCode        = otpInput.value.trim();
+  const app_type       = document.getElementById('app_type').value;
+  const statement_date = document.getElementById('statement_date').value;
 
   if (!otpCode) {
     showStatus('error', 'Please enter your OTP code before continuing.');
@@ -109,17 +102,17 @@ fetchBtn.addEventListener('click', async () => {
   }
 
   setFetching(true);
-  showStatus('loading', 'Submitting OTP and fetching activity data — this may take a minute…');
+  showStatus('loading', 'Submitting OTP and downloading transactions — this may take a minute…');
 
   try {
-    const res = await fetch(`${BASE}/ws/scrape`, {
+    const res = await fetch(`${BASE}/bmo/scrape`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        session_id: sessionId,
-        otp_code:   otpCode,
-        since_date: sinceDate,
-        format:     'csv',
+        session_id:     sessionId,
+        otp_code:       otpCode,
+        app_type,
+        statement_date,
       }),
     });
 
@@ -134,11 +127,27 @@ fetchBtn.addEventListener('click', async () => {
     }
 
     const blob = await res.blob();
-    cachedCsvText = await blob.text();
-    populateAccountDropdown(cachedCsvText);
-    accountSection.hidden = false;
-    showStatus('success', 'Activity fetched — select an account below and click Download CSV.');
-    resetFlow();
+    const ext = APP_TYPE_EXTENSION[app_type] || 'dat';
+    const filename = getFilenameFromResponse(res) || `bmo_${app_type}_${today()}.${ext}`;
+    triggerDownload(blob, filename);
+    showStatus('success', `File downloaded — ${filename}`);
+
+    const isOfx = ['msmoney', 'quicken'].includes(app_type);
+    if (isOfx) {
+      const ofxText = await blob.text();
+      QfxFilter.initUI(document.getElementById('qfx-filter-section'), ofxText, filename);
+      // Partial reset: hide OTP but keep filter section visible
+      sessionId = null;
+      otpSection.hidden = true;
+      otpInput.value = '';
+      loginBtn.disabled = false;
+      fetchBtn.disabled = false;
+      otpInput.disabled = false;
+      const formInputs = document.querySelectorAll('.form-block select, .form-block input');
+      formInputs.forEach(el => { el.disabled = false; });
+    } else {
+      resetFlow();
+    }
   } catch (err) {
     showStatus('error', err.message);
     if (err.resetRequired) {
@@ -158,7 +167,8 @@ otpInput.addEventListener('keydown', (e) => {
 function setLoggingIn(active) {
   isLoggingIn = active;
   loginBtn.disabled = active;
-  sinceDateEl.disabled = active;
+  const formInputs = document.querySelectorAll('.form-block select, .form-block input');
+  formInputs.forEach(el => { el.disabled = active; });
 }
 
 function setFetching(active) {
@@ -172,11 +182,10 @@ function resetFlow() {
   otpSection.hidden = true;
   otpInput.value = '';
   loginBtn.disabled = false;
-  sinceDateEl.disabled = false;
   fetchBtn.disabled = false;
   otpInput.disabled = false;
-  // Note: cachedCsvText and #account-section are intentionally kept alive
-  // so the user can keep downloading after the login flow is done.
+  const formInputs = document.querySelectorAll('.form-block select, .form-block input');
+  formInputs.forEach(el => { el.disabled = false; });
 }
 
 // ── Status display ────────────────────────────────────────────────
@@ -213,71 +222,6 @@ function today() {
   return new Date().toISOString().split('T')[0];
 }
 
-// ── Account dropdown + filtered download ─────────────────────────
-downloadBtn.addEventListener('click', () => {
-  if (!cachedCsvText) return;
-  const account = accountSelect.value;
-  const filtered = filterCsvByAccount(cachedCsvText, account);
-  const suffix = account === 'ALL' ? 'all' : account.replace(/\s+/g, '_');
-  triggerDownload(new Blob([filtered], { type: 'text/csv' }), `wealthsimple_${suffix}.csv`);
-});
-
-function populateAccountDropdown(csvText) {
-  const lines = csvText.trim().split('\n');
-  const headers = parseCsvLine(lines[0]);
-  const accountIdx = headers.indexOf('Account');
-  if (accountIdx === -1) return;
-
-  const accounts = new Set();
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i]);
-    if (cols[accountIdx]) accounts.add(cols[accountIdx].trim());
-  }
-
-  accountSelect.innerHTML = '<option value="ALL">ALL</option>';
-  for (const acc of [...accounts].sort()) {
-    const opt = document.createElement('option');
-    opt.value = acc;
-    opt.textContent = acc;
-    accountSelect.appendChild(opt);
-  }
-}
-
-function filterCsvByAccount(csvText, account) {
-  if (account === 'ALL') return csvText;
-  const lines = csvText.trim().split('\n');
-  const headers = parseCsvLine(lines[0]);
-  const accountIdx = headers.indexOf('Account');
-  if (accountIdx === -1) return csvText;
-
-  const kept = [lines[0]];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i]);
-    if (cols[accountIdx]?.trim() === account) kept.push(lines[i]);
-  }
-  return kept.join('\n');
-}
-
-function parseCsvLine(line) {
-  const fields = [];
-  let cur = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (ch === '"') { inQuotes = false; }
-      else { cur += ch; }
-    } else {
-      if (ch === '"') { inQuotes = true; }
-      else if (ch === ',') { fields.push(cur); cur = ''; }
-      else { cur += ch; }
-    }
-  }
-  fields.push(cur);
-  return fields;
-}
-
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -285,3 +229,13 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+// ── Restore saved selections ──────────────────────────────────────
+(function restoreSelections() {
+  const account_uuid   = getCookie('bmo_account_uuid');
+  const app_type       = getCookie('bmo_app_type');
+  const statement_date = getCookie('bmo_statement_date');
+  if (account_uuid)   document.getElementById('account_uuid').value   = account_uuid;
+  if (app_type)       document.getElementById('app_type').value       = app_type;
+  if (statement_date) document.getElementById('statement_date').value = statement_date;
+})();

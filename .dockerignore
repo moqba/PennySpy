@@ -1,0 +1,47 @@
+# Version control
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Virtual envs / caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Local data / secrets
+.env
+.env.*
+pennyspy-data/
+*.log
+
+# IDE / editor
+.idea/
+.vscode/
+.claude/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node (if any front-end tooling gets added)
+node_modules/
+
+# Docs (not needed at runtime)
+*.md
+docs/
