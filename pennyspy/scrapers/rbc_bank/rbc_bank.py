@@ -17,8 +17,8 @@ from selenium.webdriver.common.by import By
 from pennyspy.scrapers.rbc_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.rbc_bank.get_default_filename import get_default_filename
-from pennyspy.scrapers.rbc_bank.identifiers import USERNAME, PASSWORD
 from pennyspy.scrapers.rbc_bank.request_options import Software, AccountInfo, Include
+from pennyspy.scrapers.get_required_env_var import get_required_env_var
 from pennyspy.scrapers.scrapers import Scraper
 
 RBC_MAINPAGE: Final[str] = "https://www1.royalbank.com/cgi-bin/rbaccess/rbunxcgi?F6=1&F7=IB&F21=IB&F22=IB&REQUEST=ClientSignin&LANGUAGE=ENGLISH"
@@ -34,7 +34,9 @@ class RBCBank(Scraper):
         logger.info('Getting session cookies')
         self.driver.get(RBC_MAINPAGE)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
-        self._login(USERNAME, PASSWORD)
+        username = get_required_env_var("PENNYSPY_RBCU")
+        password = get_required_env_var("PENNYSPY_RBCP")
+        self._login(username, password)
         self._check_for_wrong_login()
         self._accept_cookies_if_visible()
         self._wait_for_2fa()

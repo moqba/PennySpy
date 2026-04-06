@@ -1,21 +1,20 @@
-#!/usr/bin/env python
+from pathlib import Path
 
-from distutils.core import setup
-
-from setuptools import find_packages
+from setuptools import setup, find_packages
 
 setup(
     name='pennyspy',
     description='Scrape transaction history from banks',
-    version='0.4.2',
+    version="0.4.3",
     author="Mohcine Qbaich",
     author_email='randeomcom@gmail.com',
     url='https://github.com/moqba/PennySpy',
     license='MIT',
     packages=find_packages(include=['pennyspy', 'pennyspy.*']),
-    install_requires=['requests', 'selenium', 'chromedriver', 'fake-useragent', 'fastapi', 'pydantic', 'uvicorn', 'pandas', 'bs4'],
+    install_requires=['requests', 'selenium', 'chromedriver', 'fake-useragent', 'fastapi', 'pydantic', 'uvicorn',
+                      'pandas', 'bs4', 'ofxtools'],
     extras_require={
-        'dev': ['pytest',]
+        'dev': ['pytest', ]
     },
     python_requires='>=3.11',
     entry_points={

@@ -16,8 +16,8 @@ from pennyspy.scrapers.wealthsimple.activity_fields import ActivityField
 from pennyspy.scrapers.wealthsimple.activity_id import ActivityXpath
 from pennyspy.scrapers.wealthsimple.connection_element_id import ConnectionElementXpath, ActivityElementXpath
 from pennyspy.scrapers.wealthsimple.delay_seconds import DelaySeconds
-from pennyspy.scrapers.wealthsimple.identifiers import USERNAME, PASSWORD
 from pennyspy.scrapers.scrapers import Scraper
+from pennyspy.scrapers.get_required_env_var import get_required_env_var
 from bs4 import BeautifulSoup
 
 WEALTHSIMPLE_ROOT: Final[str] = "https://my.wealthsimple.com"
@@ -92,7 +92,9 @@ class Wealthsimple(Scraper):
         logger.info('Sending Login request')
         self.driver.get(WEALTHSIMPLE_LOGIN)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
-        self._login(USERNAME, PASSWORD)
+        username = get_required_env_var("PENNYSPY_WSU")
+        password = get_required_env_var("PENNYSPY_WSP")
+        self._login(username, password)
         self._check_for_wrong_login()
 
     def send_2fa_text(self, otp_code: str):

@@ -21,6 +21,10 @@
   --rbc-blue-dim: #2A6AE0;
   --rbc-glow:     rgba(59, 139, 255, 0.15);
   --rbc-glow-2:   rgba(59, 139, 255, 0.06);
+  --bmo-blue:     #0075BE;
+  --bmo-blue-dim: #005F9E;
+  --bmo-glow:     rgba(0, 117, 190, 0.15);
+  --bmo-glow-2:   rgba(0, 117, 190, 0.06);
 
   --text:         #C8D4EC;
   --text-muted:   #4A5878;
@@ -190,6 +194,7 @@ body::before {
 
 .bank-card--rbc::after { background: var(--rbc-glow-2); }
 .bank-card--ws::after  { background: var(--ws-glow-2); }
+.bank-card--bmo::after { background: var(--bmo-glow-2); }
 
 .bank-card:hover {
   transform: translateY(-2px);
@@ -203,6 +208,11 @@ body::before {
 .bank-card--ws:hover {
   border-color: var(--ws-green);
   box-shadow: 0 0 0 1px var(--ws-green), 0 8px 32px rgba(0, 214, 143, 0.15);
+}
+
+.bank-card--bmo:hover {
+  border-color: var(--bmo-blue);
+  box-shadow: 0 0 0 1px var(--bmo-blue), 0 8px 32px rgba(0, 117, 190, 0.15);
 }
 
 .bank-card:hover::after { opacity: 1; }
@@ -228,6 +238,12 @@ body::before {
   background: rgba(0, 214, 143, 0.1);
   color: var(--ws-green);
   border: 1px solid rgba(0, 214, 143, 0.2);
+}
+
+.bank-card--bmo .bank-card__badge {
+  background: rgba(0, 117, 190, 0.12);
+  color: var(--bmo-blue);
+  border: 1px solid rgba(0, 117, 190, 0.25);
 }
 
 .bank-card__name {
@@ -256,6 +272,7 @@ body::before {
 
 .bank-card--rbc:hover .bank-card__arrow { color: var(--rbc-blue); transform: translateX(3px); }
 .bank-card--ws:hover  .bank-card__arrow { color: var(--ws-green); transform: translateX(3px); }
+.bank-card--bmo:hover .bank-card__arrow { color: var(--bmo-blue); transform: translateX(3px); }
 
 /* ─── CARD ──────────────────────────────────────────────────────── */
 .card {
@@ -296,6 +313,12 @@ body::before {
   background: rgba(0, 214, 143, 0.1);
   color: var(--ws-green);
   border: 1px solid rgba(0, 214, 143, 0.2);
+}
+
+.card__badge--bmo {
+  background: rgba(0, 117, 190, 0.12);
+  color: var(--bmo-blue);
+  border: 1px solid rgba(0, 117, 190, 0.25);
 }
 
 /* ─── FORM ELEMENTS ─────────────────────────────────────────────── */
@@ -540,6 +563,17 @@ body::before {
   flex-direction: column;
   gap: 0;
 }
+
+/* ─── DATE FILTER ──────────────────────────────────────────────── */
+.filter-dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.filter-dates .form-group { margin-bottom: 0; }
+
+input[type="date"] { color-scheme: dark; }
 
 /* ─── RESPONSIVE ────────────────────────────────────────────────── */
 @media (max-width: 480px) {
