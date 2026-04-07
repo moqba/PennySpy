@@ -1,26 +1,30 @@
 import json
 from logging import getLogger
+
 from selenium.webdriver.common.by import By
+
 from pennyspy.scrapers.bot_detection_checker.bot_detection_checker import BotDetectionChecker
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.scrapers import Scraper
 
 logger = getLogger(__name__)
 
+
 class RebrowserBotDetector(Scraper, BotDetectionChecker):
     URL = r"https://bot-detector.rebrowser.net/"
 
-    def get_test_result(self) -> dict:
+    def get_test_result(self) -> list[dict[str, object]]:
         self.driver.get(self.URL)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         result_text_area = self.driver.find_element(By.ID, "detections-json")
-        return json.loads(result_text_area.get_attribute("value"))
+        result: list[dict[str, object]] = json.loads(result_text_area.get_attribute("value"))
+        return result
 
-    def _is_test_skipped(self, test_result: dict) -> bool:
-        return test_result["rating"] == 0
+    def _is_test_skipped(self, test_result: dict[str, object]) -> bool:
+        return bool(test_result["rating"] == 0)
 
-    def _is_test_passed(self, test_result: dict) -> bool:
-        return test_result["rating"] == -1
+    def _is_test_passed(self, test_result: dict[str, object]) -> bool:
+        return bool(test_result["rating"] == -1)
 
     def assert_is_not_detected(self):
         test_results = self.get_test_result()

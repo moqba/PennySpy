@@ -1,17 +1,16 @@
+import logging
 import os
 import shutil
 import tempfile
 from datetime import datetime
 from pathlib import Path
-from random import random
+from random import choice
 from typing import Final
 
 from fake_useragent import UserAgent
-
 from selenium import webdriver
-import logging
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 FALLBACK_USER_AGENTS: Final[list[str]] = [
@@ -22,8 +21,9 @@ FALLBACK_USER_AGENTS: Final[list[str]] = [
 
 
 class Scraper:
-    def __init__(self, headless=True):
-        self.driver = None
+    driver: webdriver.Chrome
+
+    def __init__(self, headless: bool = True):
         self.init_chrome_driver(headless)
 
     def init_chrome_driver(self, headless):
@@ -33,7 +33,7 @@ class Scraper:
         options.add_experimental_option("excludeSwitches", ["enable-automation"])
         options.add_experimental_option("useAutomationExtension", False)
         if headless:
-            options.add_argument('--headless=new')
+            options.add_argument("--headless=new")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
         parent = os.environ.get("CHROME_USER_DATA_DIR")
@@ -63,7 +63,7 @@ class Scraper:
             return ua.random
         except Exception:
             logger.exception("Failed to fetch a random user agent, will use a fallback agent")
-            return random.choice(FALLBACK_USER_AGENTS)
+            return choice(FALLBACK_USER_AGENTS)
 
     def _save_screenshot(self, filename: str):
         filename += f"_{datetime.now().time().strftime('%H_%M_%S')}.png"

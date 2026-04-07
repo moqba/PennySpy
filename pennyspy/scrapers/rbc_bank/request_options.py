@@ -10,6 +10,7 @@ class Software(StrEnum):
     SIMPLY_ACCOUNTING = "SIMPLYACCOUNTING"
     CSV = "EXCEL"
 
+
 class SoftwareExtension(StrEnum):
     QUICKEN = ".ofx"
     MAKISOFT = ".afx"
@@ -18,6 +19,7 @@ class SoftwareExtension(StrEnum):
     MAKISOFT_COMPTABILITY = ".afx"
     SIMPLY_ACCOUNTING = ".aso"
     CSV = ".csv"
+
 
 class AccountInfo(StrEnum):
     ALL_ACCOUNTS = "A"

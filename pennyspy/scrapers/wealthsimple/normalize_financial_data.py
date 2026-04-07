@@ -4,18 +4,30 @@ import pandas as pd
 
 INTERNAL_ACCOUNTS = {"Chequing • Main", "TFSA", "Non-registered (Managed)", ""}
 
-TRADE_TYPES = frozenset({
-    "Limit buy", "Limit sell", "Market buy", "Market sell",
-    "Fractional buy", "Fractional sell",
-})
+TRADE_TYPES = frozenset(
+    {
+        "Limit buy",
+        "Limit sell",
+        "Market buy",
+        "Market sell",
+        "Fractional buy",
+        "Fractional sell",
+    }
+)
 
 BUY_TYPES = frozenset({"Limit buy", "Market buy", "Fractional buy"})
 SELL_TYPES = frozenset({"Limit sell", "Market sell", "Fractional sell"})
 
-TRANSFER_TYPES = frozenset({
-    "Interac e-Transfer", "Electronic funds transfer", "Direct deposit",
-    "Transfer", "Withdrawal", "Recurring deposit",
-})
+TRANSFER_TYPES = frozenset(
+    {
+        "Interac e-Transfer",
+        "Electronic funds transfer",
+        "Direct deposit",
+        "Transfer",
+        "Withdrawal",
+        "Recurring deposit",
+    }
+)
 
 
 def normalize_financial_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -29,12 +41,7 @@ def normalize_financial_df(df: pd.DataFrame) -> pd.DataFrame:
 
     result_df = pd.DataFrame(rows, columns=["Date", "Payee", "Account", "Notes", "Amount"])
     result_df["Date"] = pd.to_datetime(result_df["Date"], errors="coerce")
-    result_df = (
-        result_df
-        .dropna(subset=["Date"])
-        .sort_values("Date", ascending=False)
-        .reset_index(drop=True)
-    )
+    result_df = result_df.dropna(subset=["Date"]).sort_values("Date", ascending=False).reset_index(drop=True)
     return result_df
 
 

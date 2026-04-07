@@ -1,0 +1,77 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "pennyspy"
+version = "0.4.3"
+description = "Scrape transaction history from banks"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Mohcine Qbaich", email = "randeomcom@gmail.com" },
+]
+dependencies = [
+    "beautifulsoup4",
+    "fake-useragent",
+    "fastapi",
+    "ofxtools",
+    "pandas",
+    "pydantic",
+    "requests",
+    "selenium",
+    "uvicorn",
+]
+
+[project.optional-dependencies]
+dev = [
+    "mypy",
+    "pytest",
+    "ruff",
+    "types-beautifulsoup4",
+    "types-requests",
+    "pandas-stubs",
+]
+
+[project.scripts]
+pennyspy_api = "pennyspy.pennyspy_api:run"
+
+[project.urls]
+Repository = "https://github.com/moqba/PennySpy"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pennyspy"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # isort
+    "UP",    # pyupgrade
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["pennyspy"]
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false
+check_untyped_defs = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+log_cli = true
+log_cli_level = "INFO"
+log_cli_format = "%(asctime)s %(levelname)s %(message)s"
+log_cli_date_format = "%Y-%m-%d %H:%M:%S"

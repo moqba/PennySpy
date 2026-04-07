@@ -1,9 +1,10 @@
+from datetime import date
+from logging import getLogger
 from pathlib import Path
+from xml.etree.ElementTree import tostring as etree_tostring
 
 import pandas as pd
 from ofxtools.Parser import OFXTree
-from datetime import date
-from logging import getLogger
 
 logger = getLogger(__name__)
 
@@ -17,7 +18,7 @@ def filter_qfx(input_file, output_file, start_date: date, end_date: date):
 
     for msg_set in ofx.statements:
         for stmt in msg_set.statements:
-            acct_id = stmt.bankacctfrom.acctid if hasattr(stmt, 'bankacctfrom') else stmt.ccacctfrom.acctid
+            acct_id = stmt.bankacctfrom.acctid if hasattr(stmt, "bankacctfrom") else stmt.ccacctfrom.acctid
 
             tran_list = stmt.banktranlist
             if not tran_list:
@@ -25,10 +26,7 @@ def filter_qfx(input_file, output_file, start_date: date, end_date: date):
 
             orig_count = len(tran_list.transactions)
 
-            filtered = [
-                tx for tx in tran_list.transactions
-                if start_date <= tx.dtposted.date() <= end_date
-            ]
+            filtered = [tx for tx in tran_list.transactions if start_date <= tx.dtposted.date() <= end_date]
 
             tran_list.transactions = filtered
             removed = orig_count - len(filtered)
@@ -40,8 +38,8 @@ def filter_qfx(input_file, output_file, start_date: date, end_date: date):
                 stmt.dtstart = min(tx.dtposted for tx in filtered)
                 stmt.dtend = max(tx.dtposted for tx in filtered)
 
-    with open(output_file, 'wb') as f:
-        f.write(ofx.to_etree().to_xml())
+    with open(output_file, "wb") as f:
+        f.write(etree_tostring(ofx.to_etree()))
 
     logger.info(f"--- Process complete. Total transactions removed: {total_removed} ---")
 
@@ -55,6 +53,6 @@ def get_column_possible_values(csv_path: str | Path, column_name: str) -> set[st
         else:
             raise ValueError(f"Error: Column '{column_name}' not found in {csv_path}.")
     except FileNotFoundError:
-        return "Error: File not found. Please check the path."
+        raise FileNotFoundError(f"File not found: {csv_path}")
     except Exception as e:
-        return f"An unexpected error occurred: {e}"
+        raise RuntimeError(f"An unexpected error occurred: {e}") from e

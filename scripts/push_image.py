@@ -11,12 +11,7 @@ def run(cmd):
 
 
 def get_git_hash():
-    result = subprocess.run(
-        ["git", "rev-parse", "--short", "HEAD"],
-        capture_output=True,
-        text=True,
-        check=True
-    )
+    result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
     return result.stdout.strip()
 
 

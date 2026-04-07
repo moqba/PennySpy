@@ -1,5 +1,6 @@
 import os
 import pathlib
+from logging import getLogger
 from typing import Final
 
 import uvicorn
@@ -7,11 +8,10 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
 from pennyspy.scrapers.bmo_bank import bmo_api
 from pennyspy.scrapers.rbc_bank import rbc_api
 from pennyspy.scrapers.wealthsimple import ws_api
-
-from logging import getLogger
 
 logger = getLogger(__name__)
 
@@ -20,7 +20,7 @@ app.include_router(bmo_api.router, prefix="/bmo", tags=["BMO"])
 app.include_router(rbc_api.router, prefix="/rbc", tags=["RBC"])
 app.include_router(ws_api.router, prefix="/ws", tags=["Wealthsimple"])
 
-API_PORT: Final[int] = os.getenv("PENNYSPY_PORT", 5056)
+API_PORT: Final[int] = int(os.getenv("PENNYSPY_PORT", "5056"))
 
 app.add_middleware(
     CORSMiddleware,
@@ -30,9 +30,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-FRONTEND_DIR = pathlib.Path(
-    os.getenv("FRONTEND_DIR", pathlib.Path(__file__).parent.parent / "frontend")
-)
+FRONTEND_DIR = pathlib.Path(os.getenv("FRONTEND_DIR", pathlib.Path(__file__).parent.parent / "frontend"))
 if FRONTEND_DIR.exists():
     app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 
