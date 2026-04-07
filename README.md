@@ -7,6 +7,7 @@ Canadian bank transaction scraper with API endpoints for automated retrieval of 
 # Supported banks
 - RBC bank
 - Wealthsimple
+- BMO bank
 
 # Installation
 ## Docker
@@ -56,6 +57,8 @@ See the bank’s setup page for API call details.
 For RBC bank setup and API details, consult the [RBC setup guide](pennyspy/scrapers/rbc_bank/setup.md).
 
 For Wealthsimple setup and API details, consult the [Wealthsimple setup guide](pennyspy/scrapers/wealthsimple/setup.md).
+
+For BMO bank setup and API details, consult the [BMO setup guide](pennyspy/scrapers/bmo_bank/setup.md).
 
 
 

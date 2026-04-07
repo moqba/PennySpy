@@ -13,6 +13,7 @@ const getCookie = (name) => {
 
 const APP_TYPE_EXTENSION = {
   csv:        'csv',
+  csv_web:    'csv',
   msmoney:    'ofx',
   quicken:    'qfx',
   quickbooks: 'qbo',
@@ -51,6 +52,7 @@ loginBtn.addEventListener('click', async () => {
   setCookie('bmo_account_uuid',   account_uuid);
   setCookie('bmo_app_type',       document.getElementById('app_type').value);
   setCookie('bmo_statement_date', document.getElementById('statement_date').value);
+  setCookie('bmo_until_date',     document.getElementById('until_date').value);
 
   setLoggingIn(true);
   showStatus('loading', 'Opening BMO login — browser automation is running…');
@@ -88,10 +90,17 @@ fetchBtn.addEventListener('click', async () => {
   const otpCode        = otpInput.value.trim();
   const app_type       = document.getElementById('app_type').value;
   const statement_date = document.getElementById('statement_date').value;
+  const isCsvWeb       = app_type === 'csv_web';
+  const until_date     = document.getElementById('until_date').value;
 
   if (!otpCode) {
     showStatus('error', 'Please enter your OTP code before continuing.');
     otpInput.focus();
+    return;
+  }
+
+  if (isCsvWeb && !until_date) {
+    showStatus('error', 'Please select an "until date" for web parsing.');
     return;
   }
 
@@ -102,18 +111,27 @@ fetchBtn.addEventListener('click', async () => {
   }
 
   setFetching(true);
-  showStatus('loading', 'Submitting OTP and downloading transactions — this may take a minute…');
+  const statusMsg = isCsvWeb
+    ? 'Submitting OTP and parsing transactions from page — this may take several minutes…'
+    : 'Submitting OTP and downloading transactions — this may take a minute…';
+  showStatus('loading', statusMsg);
 
   try {
+    const bodyObj = {
+      session_id: sessionId,
+      otp_code:   otpCode,
+      app_type,
+    };
+    if (isCsvWeb) {
+      bodyObj.until_date = until_date;
+    } else {
+      bodyObj.statement_date = statement_date;
+    }
+
     const res = await fetch(`${BASE}/bmo/scrape`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id:     sessionId,
-        otp_code:       otpCode,
-        app_type,
-        statement_date,
-      }),
+      body: JSON.stringify(bodyObj),
     });
 
     if (res.status === 404) {
@@ -235,7 +253,25 @@ function escapeHtml(str) {
   const account_uuid   = getCookie('bmo_account_uuid');
   const app_type       = getCookie('bmo_app_type');
   const statement_date = getCookie('bmo_statement_date');
+  const until_date     = getCookie('bmo_until_date');
   if (account_uuid)   document.getElementById('account_uuid').value   = account_uuid;
   if (app_type)       document.getElementById('app_type').value       = app_type;
   if (statement_date) document.getElementById('statement_date').value = statement_date;
+  if (until_date)     document.getElementById('until_date').value     = until_date;
+})();
+
+// ── CSV Web toggle ───────────────────────────────────────────────
+(function initCsvWebToggle() {
+  const appTypeSelect    = document.getElementById('app_type');
+  const statementGroup   = document.getElementById('statement-date-group');
+  const untilDateGroup   = document.getElementById('until-date-group');
+
+  function toggle() {
+    const isCsvWeb = appTypeSelect.value === 'csv_web';
+    statementGroup.hidden = isCsvWeb;
+    untilDateGroup.hidden = !isCsvWeb;
+  }
+
+  appTypeSelect.addEventListener('change', toggle);
+  toggle();
 })();

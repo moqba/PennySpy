@@ -15,3 +15,11 @@ class ConnectionElementId(StrEnum):
     OTP_INPUT          = "//input[@id='otp-input']"
     MFA_CONFIRM        = "//otp-button//button[.//span[contains(@class,'text') and normalize-space(text())='CONFIRM']]"
     MFA_CONTINUE       = "//button[contains(@class,'mercury') and .//span[contains(@class,'inner-span') and contains(normalize-space(text()),'CONTINUE')]]"
+    # Web-parsed transaction table
+    TRANSACTION_SECTION_HEADER = "tr.section-header-container"
+    TRANSACTION_ROWS           = "//table//tbody/tr[contains(@class, 'table-row')]"
+    TRANSACTION_ROW_INTERACTIVE = "tr.table-row.table-row-interactive"
+    TRANSACTION_DATE           = ".//td[1]//span"
+    TRANSACTION_DESC           = ".//td[2]//span"
+    TRANSACTION_AMOUNT         = ".//td[3]//span[last()]"
+    PAGINATION_NEXT_BUTTON     = "button[data-pagination-btn='true'].next-button"
