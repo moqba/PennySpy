@@ -2,6 +2,8 @@ import shutil
 import tempfile
 import time
 import uuid
+from datetime import date, datetime
+from typing import Optional
 
 from fastapi import HTTPException, APIRouter, BackgroundTasks
 from fastapi.responses import FileResponse
@@ -29,7 +31,8 @@ class BmoScrapeParams(BaseModel):
     session_id:     str
     otp_code:       str
     app_type:       AppType
-    statement_date: StatementDate
+    statement_date: Optional[StatementDate] = None
+    until_date:     Optional[date] = None
 
 
 def _cleanup_stale_sessions() -> None:
@@ -66,14 +69,27 @@ def scrape_transactions(params: BmoScrapeParams, background_tasks: BackgroundTas
         raise HTTPException(status_code=404, detail="Session not found. Call /bmo/login first.")
     bank, _ = entry
 
+    is_csv_web = params.app_type == AppType.CSV_WEB
+    if is_csv_web and params.until_date is None:
+        raise HTTPException(status_code=400, detail="until_date is required for CSV from Web export")
+    if not is_csv_web and params.statement_date is None:
+        raise HTTPException(status_code=400, detail="statement_date is required for this export type")
+
     tmp_dirname = tempfile.mkdtemp()
     try:
-        bank.complete_2fa(params.otp_code)
-        transaction_file = bank.download_transactions(
-            app_type=params.app_type,
-            statement_date=params.statement_date,
-            export_directory=tmp_dirname,
-        )
+        if is_csv_web:
+            bank.complete_2fa(params.otp_code, skip_cookie_capture=True)
+            transaction_file = bank.parse_transactions_from_web(
+                until_date=datetime.combine(params.until_date, datetime.min.time()),
+                export_directory=tmp_dirname,
+            )
+        else:
+            bank.complete_2fa(params.otp_code)
+            transaction_file = bank.download_transactions(
+                app_type=params.app_type,
+                statement_date=params.statement_date,
+                export_directory=tmp_dirname,
+            )
     except ValueError as e:
         _cleanup_session(params.session_id, bank)
         shutil.rmtree(tmp_dirname, ignore_errors=True)

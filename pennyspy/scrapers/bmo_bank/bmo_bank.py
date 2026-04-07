@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import re
 import secrets
 from datetime import datetime, timezone
@@ -12,6 +13,7 @@ import requests
 import logging
 
 from selenium.common import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -58,11 +60,7 @@ class BMOBank(Scraper):
             logger.info("Logged in without 2FA — capturing cookies immediately")
             self._capture_cookies()
 
-    # ------------------------------------------------------------------
-    # Phase 2 — enter OTP, confirm, continue, capture cookies
-    # ------------------------------------------------------------------
-
-    def complete_2fa(self, otp_code: str) -> None:
+    def complete_2fa(self, otp_code: str, skip_cookie_capture: bool = False) -> None:
         logger.info("Entering OTP code")
         otp_field = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
             EC.element_to_be_clickable((By.XPATH, ConnectionElementId.OTP_INPUT))
@@ -85,7 +83,8 @@ class BMOBank(Scraper):
             EC.url_to_be(BMO_SUCCESS_URL)
         )
 
-        self._capture_cookies()
+        if not skip_cookie_capture:
+            self._capture_cookies()
 
     def download_transactions(
         self,
@@ -180,6 +179,135 @@ class BMOBank(Scraper):
         file_path.write_text(file_content, encoding="utf-8")
         logger.info("Transaction file saved: %s", file_path)
         return file_path
+
+    def parse_transactions_from_web(
+        self,
+        until_date: datetime,
+        export_directory: Path | str | None = None,
+    ) -> Path:
+        assert self.driver is not None, "Driver is not available — was the browser closed?"
+        assert self._account_uuid is not None
+
+        if export_directory is None:
+            export_directory = Path.cwd().parent / "downloaded_data"
+        export_directory = Path(export_directory)
+        export_directory.mkdir(parents=True, exist_ok=True)
+
+        account_url = (
+            f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
+        )
+        logger.info("Navigating to account details page for web parsing")
+        self.driver.get(account_url)
+
+        WebDriverWait(self.driver, DelaySeconds.PAGE_TIMEOUT).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_SECTION_HEADER))
+        )
+
+        all_transactions: list[tuple[datetime, str, str]] = []
+        reached_date_limit = False
+
+        while True:
+            try:
+                page_transactions = self._parse_posted_transactions_from_page()
+            except StaleElementReferenceException:
+                sleep(1)
+                page_transactions = self._parse_posted_transactions_from_page()
+            for txn_date, desc, amount in page_transactions:
+                if txn_date < until_date:
+                    reached_date_limit = True
+                    continue
+                all_transactions.append((txn_date, desc, amount))
+
+            logger.debug(
+                "Page parsed: %d txns on page, %d kept total, reached_date_limit=%s",
+                len(page_transactions), len(all_transactions), reached_date_limit,
+            )
+
+            if reached_date_limit:
+                break
+
+            try:
+                next_btn = self.driver.find_element(
+                    By.CSS_SELECTOR, ConnectionElementId.PAGINATION_NEXT_BUTTON
+                )
+            except Exception:
+                break
+
+            if next_btn.get_attribute("disabled") is not None:
+                break
+
+            old_row = self.driver.find_element(
+                By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE
+            )
+            next_btn.click()
+
+            try:
+                WebDriverWait(self.driver, DelaySeconds.PAGINATION_WAIT).until(
+                    EC.staleness_of(old_row)
+                )
+            except (TimeoutException, StaleElementReferenceException):
+                pass
+
+            try:
+                WebDriverWait(self.driver, DelaySeconds.PAGINATION_WAIT).until(
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
+                    )
+                )
+            except TimeoutException:
+                logger.warning("Pagination wait timed out — stopping")
+                break
+
+        self.driver.quit()
+        self.driver = None
+
+        if not all_transactions:
+            raise ValueError("No transactions were found for the selected date range.")
+
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        filename = f"bmo_web_transactions_{today_str}.csv"
+        file_path = export_directory / filename
+
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(["Date", "Description", "Amount"])
+            for txn_date, desc, amount in all_transactions:
+                writer.writerow([txn_date.strftime("%Y-%m-%d"), desc, amount])
+
+        logger.info("Web-parsed transactions saved: %s (%d rows)", file_path, len(all_transactions))
+        return file_path
+
+    def _parse_amount_from_web(self, text: str) -> float:
+        cleaned = text.replace('\n', '').strip()
+        sign = -1 if '-' in cleaned else 1
+        number = re.search(r'[\d,.]+', cleaned)
+        if not number:
+            raise ValueError(f"Invalid amount: {text}")
+        value = float(number.group().replace(',', ''))
+        return sign * value
+
+    def _parse_posted_transactions_from_page(self) -> list[tuple[datetime, str, str]]:
+        headers = self.driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_SECTION_HEADER)
+        logger.debug("Found %d section headers: %s", len(headers), [h.text[:50] for h in headers])
+        rows = self.driver.find_elements(By.XPATH, ConnectionElementId.TRANSACTION_ROWS)
+
+        transactions = []
+        for row in rows:
+            date_text = row.find_element(By.XPATH, ConnectionElementId.TRANSACTION_DATE).text
+            desc = row.find_element(By.XPATH, ConnectionElementId.TRANSACTION_DESC).text
+            amount_raw = row.find_element(By.XPATH, ConnectionElementId.TRANSACTION_AMOUNT).text
+            amount = self._parse_amount_from_web(amount_raw)
+
+
+            try:
+                txn_date = datetime.strptime(date_text, "%b %d, %Y")
+            except ValueError:
+                logger.warning("Could not parse date: %s — skipping row", date_text)
+                continue
+
+            transactions.append((txn_date, desc, amount))
+
+        return transactions
 
     def _login(self, username: str, password: str) -> None:
         logger.info("Filling login credentials")

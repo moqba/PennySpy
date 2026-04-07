@@ -10,3 +10,4 @@ class DelaySeconds(IntEnum):
     ACCOUNT_NAV_WAIT      = 10
     TWO_FACTOR_TIMEOUT    = 5 * 60  # 300s — user has 5 min to receive + enter OTP
     MFA_STEP_TIMEOUT      = 15      # per-step wait for each 2FA UI element
+    PAGINATION_WAIT       = 10
