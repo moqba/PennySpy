@@ -1,36 +1,48 @@
 from __future__ import annotations
-import time
-from datetime import datetime
-
-from typing import Final
 
 import logging
+import time
+from datetime import datetime
+from typing import Final
 
+from bs4 import BeautifulSoup
 from pandas import DataFrame
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support.wait import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.wait import WebDriverWait
 
+from pennyspy.scrapers.get_required_env_var import get_required_env_var
+from pennyspy.scrapers.scrapers import Scraper
 from pennyspy.scrapers.wealthsimple.activity_fields import ActivityField
 from pennyspy.scrapers.wealthsimple.activity_id import ActivityXpath
-from pennyspy.scrapers.wealthsimple.connection_element_id import ConnectionElementXpath, ActivityElementXpath
+from pennyspy.scrapers.wealthsimple.connection_element_id import ActivityElementXpath, ConnectionElementXpath
 from pennyspy.scrapers.wealthsimple.delay_seconds import DelaySeconds
-from pennyspy.scrapers.scrapers import Scraper
-from pennyspy.scrapers.get_required_env_var import get_required_env_var
-from bs4 import BeautifulSoup
 
 WEALTHSIMPLE_ROOT: Final[str] = "https://my.wealthsimple.com"
 
-_INVESTMENT_TYPES: frozenset[str] = frozenset({
-    "Limit buy", "Limit sell", "Market buy", "Market sell",
-    "Fractional buy", "Fractional sell", "Dividend", "Sold asset",
-})
+_INVESTMENT_TYPES: frozenset[str] = frozenset(
+    {
+        "Limit buy",
+        "Limit sell",
+        "Market buy",
+        "Market sell",
+        "Fractional buy",
+        "Fractional sell",
+        "Dividend",
+        "Sold asset",
+    }
+)
 
-_SELF_NAMED_TYPES: frozenset[str] = frozenset({
-    "Interest", "ATM fee reimbursement", "Non-resident tax",
-    "Management fee", "Recurring deposit",
-})
+_SELF_NAMED_TYPES: frozenset[str] = frozenset(
+    {
+        "Interest",
+        "ATM fee reimbursement",
+        "Non-resident tax",
+        "Management fee",
+        "Recurring deposit",
+    }
+)
 WEALTHSIMPLE_LOGIN: Final[str] = f"{WEALTHSIMPLE_ROOT}/login"
 WEALTHSIMPLE_HOME: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/home"
 WEALTHSIMPLE_ACTIVITY: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/activity"
@@ -81,6 +93,7 @@ def _parse_button_header(texts: list[str]) -> dict:
 
 def _looks_like_amount(text: str) -> bool:
     import re
+
     return bool(re.search(r"\$[\d,]+", text))
 
 
@@ -89,7 +102,7 @@ class Wealthsimple(Scraper):
         super().__init__(headless=headless)
 
     def login_request(self):
-        logger.info('Sending Login request')
+        logger.info("Sending Login request")
         self.driver.get(WEALTHSIMPLE_LOGIN)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         username = get_required_env_var("PENNYSPY_WSU")
@@ -106,15 +119,13 @@ class Wealthsimple(Scraper):
         self.driver.find_element(By.XPATH, ConnectionElementXpath.SUBMIT).click()
         try:
             WebDriverWait(self.driver, DelaySeconds.LOGIN_ATTEMPT).until(
-                EC.presence_of_element_located(
-                    (By.XPATH, ConnectionElementXpath.FAILED_2FA)
-                )
+                EC.presence_of_element_located((By.XPATH, ConnectionElementXpath.FAILED_2FA))
             )
             print("Error message appeared")
             raise ValueError("OTP code didn't work")
         except TimeoutException:
             pass
-        assert self.driver.current_url == WEALTHSIMPLE_HOME, f"Failed to connect"
+        assert self.driver.current_url == WEALTHSIMPLE_HOME, "Failed to connect"
         logging.info("Connection successful.")
 
     def fetch_activity(self, since_date: datetime | None = None) -> DataFrame:
@@ -152,8 +163,7 @@ class Wealthsimple(Scraper):
 
     def _build_date_index(self) -> dict[str, datetime]:
         elements = self.driver.find_elements(
-            By.XPATH,
-            '//h2[@data-fs-privacy-rule="unmask"] | //button[contains(@id, "-header")]'
+            By.XPATH, '//h2[@data-fs-privacy-rule="unmask"] | //button[contains(@id, "-header")]'
         )
         result: dict[str, datetime] = {}
         current_date: datetime | None = None
@@ -205,7 +215,7 @@ class Wealthsimple(Scraper):
                 activity_div = self.driver.find_element(By.ID, region_id)
                 activity = self.get_activity_html_soup(activity_div)
                 # Enrich with ticker / type / payee from the button header
-                btn_ps = button.find_elements(By.XPATH, './/p')
+                btn_ps = button.find_elements(By.XPATH, ".//p")
                 btn_texts = [p.text.strip() for p in btn_ps if p.text.strip()]
                 meta = _parse_button_header(btn_texts)
                 if meta.get("ticker") and not activity.get(ActivityField.TICKER.value):
@@ -228,14 +238,10 @@ class Wealthsimple(Scraper):
         for label in ActivityField:
             try:
                 label_elem = activity_div.find_element(
-                    By.XPATH,
-                    f'.//p[@data-fs-privacy-rule="unmask" and normalize-space(text())="{label}"]'
+                    By.XPATH, f'.//p[@data-fs-privacy-rule="unmask" and normalize-space(text())="{label}"]'
                 )
                 if label_elem:
-                    value_elem = label_elem.find_element(
-                        By.XPATH,
-                        '../../div[@data-fs-privacy-rule="mask"]//p'
-                    )
+                    value_elem = label_elem.find_element(By.XPATH, '../../div[@data-fs-privacy-rule="mask"]//p')
                     activity[label.value] = value_elem.text.strip()
             except Exception:
                 continue
@@ -251,13 +257,13 @@ class Wealthsimple(Scraper):
             if label in _synthetic:
                 continue
             label_elem = soup.find("p", {"data-fs-privacy-rule": "unmask"}, string=lambda s: s and s.strip() == label)
-            if label_elem:
+            if label_elem and label_elem.parent and label_elem.parent.parent:
                 row_div = label_elem.parent.parent  # p -> div.hQERxA -> div.lizokw
                 # Value container uses class "gQehiP" regardless of privacy rule
                 value_div = row_div.find("div", class_="gQehiP")
                 if value_div:
                     value_p = value_div.find("p")
-                    if value_p:
+                    if value_p and hasattr(value_p, "text"):
                         activity[label.value] = value_p.text.strip()
         return activity
 
@@ -270,11 +276,8 @@ class Wealthsimple(Scraper):
     def _check_for_wrong_login(self):
         try:
             WebDriverWait(self.driver, DelaySeconds.LOGIN_ATTEMPT).until(
-                EC.visibility_of_element_located(
-                    (By.XPATH, ConnectionElementXpath.USER_INCORRECT)
-                )
+                EC.visibility_of_element_located((By.XPATH, ConnectionElementXpath.USER_INCORRECT))
             )
             raise ValueError("Username and password seems to be invalid, failed to connect.")
         except TimeoutException:
             pass
-

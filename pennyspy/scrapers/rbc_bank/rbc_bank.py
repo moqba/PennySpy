@@ -1,29 +1,31 @@
 from __future__ import annotations
 
-from http import HTTPStatus
-from pathlib import Path
-from typing import Final
-from time import sleep
-
-import requests
 import logging
 import re
+from http import HTTPStatus
+from pathlib import Path
+from time import sleep
+from typing import Final
 
+import requests
 from selenium.common import TimeoutException
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
+from pennyspy.scrapers.get_required_env_var import get_required_env_var
 from pennyspy.scrapers.rbc_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.rbc_bank.get_default_filename import get_default_filename
-from pennyspy.scrapers.rbc_bank.request_options import Software, AccountInfo, Include
-from pennyspy.scrapers.get_required_env_var import get_required_env_var
+from pennyspy.scrapers.rbc_bank.request_options import AccountInfo, Include, Software
 from pennyspy.scrapers.scrapers import Scraper
 
-RBC_MAINPAGE: Final[str] = "https://www1.royalbank.com/cgi-bin/rbaccess/rbunxcgi?F6=1&F7=IB&F21=IB&F22=IB&REQUEST=ClientSignin&LANGUAGE=ENGLISH"
+RBC_MAINPAGE: Final[str] = (
+    "https://www1.royalbank.com/cgi-bin/rbaccess/rbunxcgi?F6=1&F7=IB&F21=IB&F22=IB&REQUEST=ClientSignin&LANGUAGE=ENGLISH"
+)
 
 logger = logging.getLogger(__name__)
+
 
 class RBCBank(Scraper):
     def __init__(self, headless=True):
@@ -31,7 +33,7 @@ class RBCBank(Scraper):
         self.cookies = None
 
     def get_session_cookies(self):
-        logger.info('Getting session cookies')
+        logger.info("Getting session cookies")
         self.driver.get(RBC_MAINPAGE)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         username = get_required_env_var("PENNYSPY_RBCU")
@@ -47,13 +49,15 @@ class RBCBank(Scraper):
 
     def _login(self, username, password):
         logger.info("logging in...")
-        self.driver.find_element(By.ID , ConnectionElementId.USERNAME).send_keys(username)
+        self.driver.find_element(By.ID, ConnectionElementId.USERNAME).send_keys(username)
         self.driver.find_element(By.ID, ConnectionElementId.PASSWORD).send_keys(password)
         self.driver.find_element(By.ID, ConnectionElementId.PASSWORD).submit()
 
     def _accept_cookies_if_visible(self):
         try:
-            accept_cookies = WebDriverWait(self.driver, DelaySeconds.COOKIE_PROMPT_TIMEOUT.value).until(EC.presence_of_element_located((By.ID, "onetrust-accept-btn-handler")))
+            accept_cookies = WebDriverWait(self.driver, DelaySeconds.COOKIE_PROMPT_TIMEOUT.value).until(
+                EC.presence_of_element_located((By.ID, "onetrust-accept-btn-handler"))
+            )
             logger.info("Accepting cookies")
             accept_cookies.click()
         except TimeoutException:
@@ -61,24 +65,40 @@ class RBCBank(Scraper):
 
     def _check_for_wrong_login(self):
         try:
-            WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING.value).until(EC.presence_of_element_located((By.ID, ConnectionElementId.WRONG_USER_PROMPT)))
+            WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING.value).until(
+                EC.presence_of_element_located((By.ID, ConnectionElementId.WRONG_USER_PROMPT))
+            )
         except TimeoutException as _:
             return
         raise ValueError("Username and password seems to be invalid, failed to connect.")
 
-
     def _wait_for_2fa(self):
-            logger.info("waiting for 2FA...")
-            try:
-                WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(EC.url_contains("summary"), message="Timeout waiting for 2FA")
-            except TimeoutException as e:
-                self._save_screenshot("timeout_2fa")
-                raise TimeoutException from e
-            logger.info("Connected.")
+        logger.info("waiting for 2FA...")
+        try:
+            WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(
+                EC.url_contains("summary"), message="Timeout waiting for 2FA"
+            )
+        except TimeoutException as e:
+            self._save_screenshot("timeout_2fa")
+            raise TimeoutException from e
+        logger.info("Connected.")
 
-    def download_transactions(self, software: Software, account_info: AccountInfo, include: Include, export_directory: Path | str | None = None) -> Path | None:
-        assert self.cookies is not None, "Cookies have not been fetched yet, cannot download transactions. Please fetch cookies first."
-        logger.info("Downloading transactions with software %s account info %s including %s", software.name, account_info.name, include.name)
+    def download_transactions(
+        self,
+        software: Software,
+        account_info: AccountInfo,
+        include: Include,
+        export_directory: Path | str | None = None,
+    ) -> Path | None:
+        assert self.cookies is not None, (
+            "Cookies have not been fetched yet, cannot download transactions. Please fetch cookies first."
+        )
+        logger.info(
+            "Downloading transactions with software %s account info %s including %s",
+            software.name,
+            account_info.name,
+            include.name,
+        )
         url = "https://www1.royalbank.com/sgw5/SECOLBH/3m00/ISAMSecureRequest/v1/eBGRenderPage"
 
         session = requests.Session()
@@ -98,7 +118,7 @@ class RBCBank(Scraper):
             "sec-fetch-site": "same-origin",
             "sec-fetch-user": "?1",
             "upgrade-insecure-requests": "1",
-            "referer": "https://www1.royalbank.com/sgw5/SECOLBH/3m00/ISAMSecureRequest/v1/eBGRenderPage"
+            "referer": "https://www1.royalbank.com/sgw5/SECOLBH/3m00/ISAMSecureRequest/v1/eBGRenderPage",
         }
 
         data = {
@@ -113,7 +133,7 @@ class RBCBank(Scraper):
             "FROMDAY": "1",
             "FROMMONTH": "1",
             "TODAY": "1",
-            "TOMONTH": "1"
+            "TOMONTH": "1",
         }
         if export_directory is None:
             export_directory = Path.cwd().parent / "downloaded_data"
@@ -121,8 +141,10 @@ class RBCBank(Scraper):
         export_directory.mkdir(parents=True, exist_ok=True)
 
         response = session.post(url, data=data, headers=headers)
-        assert response.status_code == HTTPStatus.OK, f"Failed to download transaction data, status code : {response.status_code}"
-        cd = response.headers.get("content-disposition")
+        assert response.status_code == HTTPStatus.OK, (
+            f"Failed to download transaction data, status code : {response.status_code}"
+        )
+        cd = response.headers.get("content-disposition", "")
         filename = self._get_filename_from_content_disposition(cd)
         if filename is None:
             filename = get_default_filename(software)
@@ -133,8 +155,6 @@ class RBCBank(Scraper):
                     f.write(chunk)
         logger.info(f"File saved as {file_path}")
         return file_path
-
-
 
     def _get_filename_from_content_disposition(self, content_disposition: str) -> str | None:
         if not content_disposition:

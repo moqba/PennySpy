@@ -2,6 +2,7 @@ import shutil
 import tempfile
 import uuid
 from datetime import date, datetime
+from logging import getLogger
 from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException
@@ -10,8 +11,6 @@ from pydantic import BaseModel
 
 from pennyspy.scrapers.wealthsimple.normalize_financial_data import normalize_financial_df
 from pennyspy.scrapers.wealthsimple.wealthsimple import Wealthsimple
-
-from logging import getLogger
 
 logger = getLogger(__name__)
 

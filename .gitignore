@@ -1,6 +1,19 @@
 .env
 downloaded_data/
 /build/
-/build/
 .idea
-/pennyspy.egg-info/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+
+# Virtual environments
+.venv/
+venv/
+
+# Type checking / linting caches
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/

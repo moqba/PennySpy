@@ -32,4 +32,3 @@ class ActivityField(StrEnum):
     TICKER = "Ticker"
     BUTTON_PAYEE = "Button payee"
     BUTTON_AMOUNT = "Button amount"
-

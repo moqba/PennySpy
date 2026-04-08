@@ -19,7 +19,7 @@ ENV PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /build
 
-COPY setup.py ./
+COPY pyproject.toml ./
 RUN mkdir -p pennyspy && echo "" > pennyspy/__init__.py \
     && pip install --no-cache-dir . \
     && rm -rf pennyspy

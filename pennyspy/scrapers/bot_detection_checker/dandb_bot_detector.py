@@ -1,12 +1,14 @@
 import json
 import time
 from logging import getLogger
+
 from selenium.webdriver.common.by import By
+
 from pennyspy.scrapers.bot_detection_checker.bot_detection_checker import BotDetectionChecker
-from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.scrapers import Scraper
 
 logger = getLogger(__name__)
+
 
 class DAndBBotDetector(Scraper, BotDetectionChecker):
     URL = r"https://deviceandbrowserinfo.com/are_you_a_bot/"
@@ -17,7 +19,7 @@ class DAndBBotDetector(Scraper, BotDetectionChecker):
         time.sleep(self.TEST_LOADING_DELAY_SEC)
         result_text = self.driver.find_element(By.ID, "jsonResult")
         raw_result_text = result_text.get_attribute("textContent")
-        return json.loads(raw_result_text)
+        return json.loads(raw_result_text)  # type: ignore[no-any-return]
 
     def assert_is_not_detected(self):
         test_results = self.get_test_result()

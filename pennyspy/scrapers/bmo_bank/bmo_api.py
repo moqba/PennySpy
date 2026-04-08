@@ -3,16 +3,14 @@ import tempfile
 import time
 import uuid
 from datetime import date, datetime
-from typing import Optional
+from logging import getLogger
 
-from fastapi import HTTPException, APIRouter, BackgroundTasks
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from pennyspy.scrapers.bmo_bank.bmo_bank import BMOBank
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
-
-from logging import getLogger
 
 logger = getLogger(__name__)
 
@@ -28,11 +26,11 @@ class BmoLoginParams(BaseModel):
 
 
 class BmoScrapeParams(BaseModel):
-    session_id:     str
-    otp_code:       str
-    app_type:       AppType
-    statement_date: Optional[StatementDate] = None
-    until_date:     Optional[date] = None
+    session_id: str
+    otp_code: str
+    app_type: AppType
+    statement_date: StatementDate | None = None
+    until_date: date | None = None
 
 
 def _cleanup_stale_sessions() -> None:
@@ -79,12 +77,14 @@ def scrape_transactions(params: BmoScrapeParams, background_tasks: BackgroundTas
     try:
         if is_csv_web:
             bank.complete_2fa(params.otp_code, skip_cookie_capture=True)
+            assert params.until_date is not None
             transaction_file = bank.parse_transactions_from_web(
                 until_date=datetime.combine(params.until_date, datetime.min.time()),
                 export_directory=tmp_dirname,
             )
         else:
             bank.complete_2fa(params.otp_code)
+            assert params.statement_date is not None
             transaction_file = bank.download_transactions(
                 app_type=params.app_type,
                 statement_date=params.statement_date,

@@ -1,4 +1,4 @@
-from pennyspy.scrapers.rbc_bank.request_options import SoftwareExtension, Software
+from pennyspy.scrapers.rbc_bank.request_options import Software, SoftwareExtension
 
 
 def get_default_filename(software: Software) -> str:

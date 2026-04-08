@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import csv
+import logging
 import re
 import secrets
-from datetime import datetime, timezone
+from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
 from time import sleep
 from typing import Final, Literal
 
 import requests
-import logging
-
 from selenium.common import TimeoutException
 from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.by import By
@@ -27,9 +26,7 @@ from pennyspy.scrapers.scrapers import Scraper
 
 BMO_LOGIN_URL: Final[str] = "https://www1.bmo.com/banking/digital/login"
 BMO_SUCCESS_URL: Final[str] = "https://www1.bmo.com/banking/digital/accounts"
-BMO_DOWNLOAD_URL: Final[str] = (
-    "https://www1.bmo.com/banking/services/accountdetails/downloadCCTransactions"
-)
+BMO_DOWNLOAD_URL: Final[str] = "https://www1.bmo.com/banking/services/accountdetails/downloadCCTransactions"
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +37,6 @@ class BMOBank(Scraper):
         self.cookies: list[dict] | None = None
         self._account_uuid: str | None = None
         self._user_agent: str = self.driver.execute_script("return navigator.userAgent")
-
 
     def initiate_login(self, account_uuid: str) -> None:
         self._account_uuid = account_uuid
@@ -79,9 +75,7 @@ class BMOBank(Scraper):
         continue_btn.click()
 
         logger.info("Waiting for post-2FA redirect to %s", BMO_SUCCESS_URL)
-        WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(
-            EC.url_to_be(BMO_SUCCESS_URL)
-        )
+        WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(EC.url_to_be(BMO_SUCCESS_URL))
 
         if not skip_cookie_capture:
             self._capture_cookies()
@@ -115,46 +109,46 @@ class BMOBank(Scraper):
         client_date = now_time.strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3]
 
         headers = {
-            "Content-Type":            "application/json",
-            "X-ChannelType":           "OLB",
-            "x_channeltype":           "OLB",
-            "X-XSRF-TOKEN":            xsrf_token,
-            "X-UI-Session-ID":         "0.0.1",
-            "X-App-Version":           "session-id",
-            "X-App-Current-Path":      f"/banking/digital/account-details/cc/{self._account_uuid}",
-            "X-Request-ID":            request_id,
+            "Content-Type": "application/json",
+            "X-ChannelType": "OLB",
+            "x_channeltype": "OLB",
+            "X-XSRF-TOKEN": xsrf_token,
+            "X-UI-Session-ID": "0.0.1",
+            "X-App-Version": "session-id",
+            "X-App-Current-Path": f"/banking/digital/account-details/cc/{self._account_uuid}",
+            "X-Request-ID": request_id,
             "X-Original-Request-Time": now_time.strftime("%a, %d %b %Y %H:%M:%S GMT"),
             "Referer": (
-                f"https://www1.bmo.com/banking/digital/account-details/cc/"
-                f"{self._account_uuid}?modal=transactions"
+                f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}?modal=transactions"
             ),
         }
 
         body = {
             "DownloadMCAccountDetailsRq": {
                 "HdrRq": {
-                    "ver":             "1.0",
-                    "channelType":     "OLB",
-                    "appName":         "OLB",
-                    "hostName":        "BDBN-HostName",
-                    "clientDate":      client_date,
-                    "rqUID":           request_id,
+                    "ver": "1.0",
+                    "channelType": "OLB",
+                    "appName": "OLB",
+                    "hostName": "BDBN-HostName",
+                    "clientDate": client_date,
+                    "rqUID": request_id,
                     "clientSessionID": "session-id",
-                    "userAgent":       self._user_agent,
-                    "clientIP":        "127.0.0.1",
-                    "mfaDeviceToken":  mfa_token,
+                    "userAgent": self._user_agent,
+                    "clientIP": "127.0.0.1",
+                    "mfaDeviceToken": mfa_token,
                 },
                 "BodyRq": {
-                    "accountIndex":  "0",
+                    "accountIndex": "0",
                     "statementDate": statement_date.value,
-                    "appType":       app_type.value,
+                    "appType": app_type.value,
                 },
             }
         }
 
         logger.info(
             "Posting download request (app_type=%s, statement_date=%s)",
-            app_type, statement_date,
+            app_type,
+            statement_date,
         )
         response = session.post(BMO_DOWNLOAD_URL, json=body, headers=headers)
         assert response.status_code == HTTPStatus.OK, (
@@ -164,10 +158,7 @@ class BMOBank(Scraper):
         payload = response.json()
         body_rs = payload["DownloadCCTransactionsRs"]["BodyRs"]
         if errors := body_rs.get("errorList"):
-            messages = "; ".join(
-                f"[{e.get('code', 'UNKNOWN')}] {e.get('errorMessage', 'No message')}"
-                for e in errors
-            )
+            messages = "; ".join(f"[{e.get('code', 'UNKNOWN')}] {e.get('errorMessage', 'No message')}" for e in errors)
             raise ValueError(f"API returned errors: {messages}")
         file_content: str = body_rs["pfmFile"]
 
@@ -193,9 +184,7 @@ class BMOBank(Scraper):
         export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
 
-        account_url = (
-            f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
-        )
+        account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
         logger.info("Navigating to account details page for web parsing")
         self.driver.get(account_url)
 
@@ -203,7 +192,7 @@ class BMOBank(Scraper):
             EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_SECTION_HEADER))
         )
 
-        all_transactions: list[tuple[datetime, str, str]] = []
+        all_transactions: list[tuple[datetime, str, float]] = []
         reached_date_limit = False
 
         while True:
@@ -220,46 +209,40 @@ class BMOBank(Scraper):
 
             logger.debug(
                 "Page parsed: %d txns on page, %d kept total, reached_date_limit=%s",
-                len(page_transactions), len(all_transactions), reached_date_limit,
+                len(page_transactions),
+                len(all_transactions),
+                reached_date_limit,
             )
 
             if reached_date_limit:
                 break
 
             try:
-                next_btn = self.driver.find_element(
-                    By.CSS_SELECTOR, ConnectionElementId.PAGINATION_NEXT_BUTTON
-                )
+                next_btn = self.driver.find_element(By.CSS_SELECTOR, ConnectionElementId.PAGINATION_NEXT_BUTTON)
             except Exception:
                 break
 
             if next_btn.get_attribute("disabled") is not None:
                 break
 
-            old_row = self.driver.find_element(
-                By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE
-            )
+            old_row = self.driver.find_element(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
             next_btn.click()
 
             try:
-                WebDriverWait(self.driver, DelaySeconds.PAGINATION_WAIT).until(
-                    EC.staleness_of(old_row)
-                )
+                WebDriverWait(self.driver, DelaySeconds.PAGINATION_WAIT).until(EC.staleness_of(old_row))
             except (TimeoutException, StaleElementReferenceException):
                 pass
 
             try:
                 WebDriverWait(self.driver, DelaySeconds.PAGINATION_WAIT).until(
-                    EC.presence_of_element_located(
-                        (By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
-                    )
+                    EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE))
                 )
             except TimeoutException:
                 logger.warning("Pagination wait timed out — stopping")
                 break
 
         self.driver.quit()
-        self.driver = None
+        self.driver = None  # type: ignore[assignment]
 
         if not all_transactions:
             raise ValueError("No transactions were found for the selected date range.")
@@ -278,15 +261,15 @@ class BMOBank(Scraper):
         return file_path
 
     def _parse_amount_from_web(self, text: str) -> float:
-        cleaned = text.replace('\n', '').strip()
-        sign = -1 if '-' in cleaned else 1
-        number = re.search(r'[\d,.]+', cleaned)
+        cleaned = text.replace("\n", "").strip()
+        sign = -1 if "-" in cleaned else 1
+        number = re.search(r"[\d,.]+", cleaned)
         if not number:
             raise ValueError(f"Invalid amount: {text}")
-        value = float(number.group().replace(',', ''))
+        value = float(number.group().replace(",", ""))
         return sign * value
 
-    def _parse_posted_transactions_from_page(self) -> list[tuple[datetime, str, str]]:
+    def _parse_posted_transactions_from_page(self) -> list[tuple[datetime, str, float]]:
         headers = self.driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_SECTION_HEADER)
         logger.debug("Found %d section headers: %s", len(headers), [h.text[:50] for h in headers])
         rows = self.driver.find_elements(By.XPATH, ConnectionElementId.TRANSACTION_ROWS)
@@ -297,7 +280,6 @@ class BMOBank(Scraper):
             desc = row.find_element(By.XPATH, ConnectionElementId.TRANSACTION_DESC).text
             amount_raw = row.find_element(By.XPATH, ConnectionElementId.TRANSACTION_AMOUNT).text
             amount = self._parse_amount_from_web(amount_raw)
-
 
             try:
                 txn_date = datetime.strptime(date_text, "%b %d, %Y")
@@ -376,16 +358,14 @@ class BMOBank(Scraper):
         send_btn.click()
 
     def _capture_cookies(self) -> None:
-        account_url = (
-            f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
-        )
+        account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
         logger.info("Navigating to account page to prime XSRF-TOKEN cookie")
         self.driver.get(account_url)
         sleep(DelaySeconds.ACCOUNT_NAV_WAIT)
 
         self.cookies = self.driver.get_cookies()
         self.driver.quit()
-        self.driver = None
+        self.driver = None  # type: ignore[assignment]
         logger.info("Session cookies captured (%d cookies)", len(self.cookies))
 
     def _extract_login_error(self) -> str | None:
