@@ -5,7 +5,7 @@ from logging import getLogger
 from selenium.webdriver.common.by import By
 
 from pennyspy.scrapers.bot_detection_checker.bot_detection_checker import BotDetectionChecker
-from pennyspy.scrapers.scraper import Scraper
+from pennyspy.scrapers.scrapers import Scraper
 
 logger = getLogger(__name__)
 
@@ -19,7 +19,6 @@ class DAndBBotDetector(Scraper, BotDetectionChecker):
         time.sleep(self.TEST_LOADING_DELAY_SEC)
         result_text = self.driver.find_element(By.ID, "jsonResult")
         raw_result_text = result_text.get_attribute("textContent")
-        assert raw_result_text is not None, "Could not read test result text"
         return json.loads(raw_result_text)  # type: ignore[no-any-return]
 
     def assert_is_not_detected(self):

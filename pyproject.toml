@@ -14,7 +14,7 @@ authors = [
 ]
 dependencies = [
     "beautifulsoup4",
-    "browserforge>=1.2.4",
+    "fake-useragent",
     "fastapi",
     "ofxtools",
     "pandas",

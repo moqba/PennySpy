@@ -5,7 +5,7 @@ from selenium.webdriver.common.by import By
 
 from pennyspy.scrapers.bot_detection_checker.bot_detection_checker import BotDetectionChecker
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
-from pennyspy.scrapers.scraper import Scraper
+from pennyspy.scrapers.scrapers import Scraper
 
 logger = getLogger(__name__)
 
@@ -17,9 +17,7 @@ class RebrowserBotDetector(Scraper, BotDetectionChecker):
         self.driver.get(self.URL)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         result_text_area = self.driver.find_element(By.ID, "detections-json")
-        raw_value = result_text_area.get_attribute("value")
-        assert raw_value is not None, "Could not read detections JSON"
-        result: list[dict[str, object]] = json.loads(raw_value)
+        result: list[dict[str, object]] = json.loads(result_text_area.get_attribute("value"))
         return result
 
     def _is_test_skipped(self, test_result: dict[str, object]) -> bool:
