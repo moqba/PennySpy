@@ -8,7 +8,7 @@ from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
 from time import sleep
-from typing import Final, Literal
+from typing import Any, Final, Literal
 
 import requests
 from selenium.common import TimeoutException
@@ -17,12 +17,13 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from pennyspy.scrapers.base import AuthStep, BankScraper
 from pennyspy.scrapers.bmo_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.bmo_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.bmo_bank.get_default_filename import get_default_filename
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
 from pennyspy.scrapers.get_required_env_var import get_required_env_var
-from pennyspy.scrapers.scrapers import Scraper
+from pennyspy.scrapers.scraper import BrowserConfig
 
 BMO_LOGIN_URL: Final[str] = "https://www1.bmo.com/banking/digital/login"
 BMO_SUCCESS_URL: Final[str] = "https://www1.bmo.com/banking/digital/accounts"
@@ -31,14 +32,18 @@ BMO_DOWNLOAD_URL: Final[str] = "https://www1.bmo.com/banking/services/accountdet
 logger = logging.getLogger(__name__)
 
 
-class BMOBank(Scraper):
-    def __init__(self, headless: bool = True):
-        super().__init__(headless=headless)
+class BMOBank(BankScraper):
+    def __init__(self, config: BrowserConfig = BrowserConfig()):
+        super().__init__(config=config)
         self.cookies: list[dict] | None = None
         self._account_uuid: str | None = None
         self._user_agent: str = self.driver.execute_script("return navigator.userAgent")
+        self._authenticated: bool = False
 
-    def initiate_login(self, account_uuid: str) -> None:
+    # ── BankScraper interface ──────────────────────────────────────────
+
+    def start_auth(self, **kwargs: Any) -> AuthStep:
+        account_uuid: str = kwargs["account_uuid"]
         self._account_uuid = account_uuid
         logger.info("Navigating to BMO login page")
         self.driver.get(BMO_LOGIN_URL)
@@ -52,11 +57,42 @@ class BMOBank(Scraper):
         if outcome == "2fa":
             self._handle_2fa_initiation()
             logger.info("2FA initiation complete — waiting for OTP from user")
+            return AuthStep(status="needs_otp", message="Enter the OTP code sent to your phone")
         else:
-            logger.info("Logged in without 2FA — capturing cookies immediately")
-            self._capture_cookies()
+            logger.info("Logged in without 2FA")
+            self._authenticated = True
+            return AuthStep(status="authenticated")
 
-    def complete_2fa(self, otp_code: str, skip_cookie_capture: bool = False) -> None:
+    def continue_auth(self, *, otp_code: str | None = None) -> AuthStep:
+        if self._authenticated:
+            return AuthStep(status="authenticated")
+        assert otp_code is not None, "OTP code is required for BMO 2FA"
+        self._complete_2fa(otp_code)
+        self._authenticated = True
+        return AuthStep(status="authenticated")
+
+    def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
+        app_type: AppType = kwargs["app_type"]
+        if kwargs.get("until_date") is not None:
+            # Web scraping path — uses the live browser, no cookies needed
+            return self._parse_transactions_from_web(
+                until_date=kwargs["until_date"],
+                export_directory=export_directory,
+            )
+        # API path — capture cookies if not already done (no-2FA path captures early)
+        if self.cookies is None:
+            self._capture_cookies()
+        statement_date: StatementDate = kwargs["statement_date"]
+        return self._download_transactions_via_api(
+            app_type=app_type,
+            statement_date=statement_date,
+            export_directory=export_directory,
+        )
+
+    # ── Internal implementation ────────────────────────────────────────
+
+    def _complete_2fa(self, otp_code: str) -> None:
+        """Complete the 2FA UI flow. Does NOT capture cookies or quit the driver."""
         logger.info("Entering OTP code")
         otp_field = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
             EC.element_to_be_clickable((By.XPATH, ConnectionElementId.OTP_INPUT))
@@ -77,22 +113,15 @@ class BMOBank(Scraper):
         logger.info("Waiting for post-2FA redirect to %s", BMO_SUCCESS_URL)
         WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(EC.url_to_be(BMO_SUCCESS_URL))
 
-        if not skip_cookie_capture:
-            self._capture_cookies()
-
-    def download_transactions(
+    def _download_transactions_via_api(
         self,
         app_type: AppType,
         statement_date: StatementDate,
-        export_directory: Path | str | None = None,
+        export_directory: Path | str,
     ) -> Path:
-        assert self.cookies is not None, (
-            "Cookies have not been fetched yet. Call initiate_login() + complete_2fa() first."
-        )
+        assert self.cookies is not None, "Cookies have not been captured yet."
         assert self._account_uuid is not None
 
-        if export_directory is None:
-            export_directory = Path.cwd().parent / "downloaded_data"
         export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
 
@@ -171,16 +200,13 @@ class BMOBank(Scraper):
         logger.info("Transaction file saved: %s", file_path)
         return file_path
 
-    def parse_transactions_from_web(
+    def _parse_transactions_from_web(
         self,
         until_date: datetime,
-        export_directory: Path | str | None = None,
+        export_directory: Path | str,
     ) -> Path:
-        assert self.driver is not None, "Driver is not available — was the browser closed?"
         assert self._account_uuid is not None
 
-        if export_directory is None:
-            export_directory = Path.cwd().parent / "downloaded_data"
         export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
 
@@ -240,9 +266,6 @@ class BMOBank(Scraper):
             except TimeoutException:
                 logger.warning("Pagination wait timed out — stopping")
                 break
-
-        self.driver.quit()
-        self.driver = None  # type: ignore[assignment]
 
         if not all_transactions:
             raise ValueError("No transactions were found for the selected date range.")
@@ -364,8 +387,6 @@ class BMOBank(Scraper):
         sleep(DelaySeconds.ACCOUNT_NAV_WAIT)
 
         self.cookies = self.driver.get_cookies()
-        self.driver.quit()
-        self.driver = None  # type: ignore[assignment]
         logger.info("Session cookies captured (%d cookies)", len(self.cookies))
 
     def _extract_login_error(self) -> str | None:
