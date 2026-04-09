@@ -30,7 +30,7 @@ class BmoScrapeParams(BaseModel):
     otp_code: str
     app_type: AppType
     statement_date: StatementDate | None = None
-    until_date: date | None = None
+    from_date: date | None = None
 
 
 def _cleanup_stale_sessions() -> None:
@@ -68,8 +68,8 @@ def scrape_transactions(params: BmoScrapeParams, background_tasks: BackgroundTas
     bank, _ = entry
 
     is_csv_web = params.app_type == AppType.CSV_WEB
-    if is_csv_web and params.until_date is None:
-        raise HTTPException(status_code=400, detail="until_date is required for CSV from Web export")
+    if is_csv_web and params.from_date is None:
+        raise HTTPException(status_code=400, detail="from_date is required for CSV from Web export")
     if not is_csv_web and params.statement_date is None:
         raise HTTPException(status_code=400, detail="statement_date is required for this export type")
 
@@ -77,9 +77,9 @@ def scrape_transactions(params: BmoScrapeParams, background_tasks: BackgroundTas
     try:
         if is_csv_web:
             bank.complete_2fa(params.otp_code, skip_cookie_capture=True)
-            assert params.until_date is not None
+            assert params.from_date is not None
             transaction_file = bank.parse_transactions_from_web(
-                until_date=datetime.combine(params.until_date, datetime.min.time()),
+                from_date=datetime.combine(params.from_date, datetime.min.time()),
                 export_directory=tmp_dirname,
             )
         else:

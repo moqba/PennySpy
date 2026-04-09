@@ -52,7 +52,7 @@ loginBtn.addEventListener('click', async () => {
   setCookie('bmo_account_uuid',   account_uuid);
   setCookie('bmo_app_type',       document.getElementById('app_type').value);
   setCookie('bmo_statement_date', document.getElementById('statement_date').value);
-  setCookie('bmo_until_date',     document.getElementById('until_date').value);
+  setCookie('bmo_from_date',     document.getElementById('from_date').value);
 
   setLoggingIn(true);
   showStatus('loading', 'Opening BMO login — browser automation is running…');
@@ -91,7 +91,7 @@ fetchBtn.addEventListener('click', async () => {
   const app_type       = document.getElementById('app_type').value;
   const statement_date = document.getElementById('statement_date').value;
   const isCsvWeb       = app_type === 'csv_web';
-  const until_date     = document.getElementById('until_date').value;
+  const from_date     = document.getElementById('from_date').value;
 
   if (!otpCode) {
     showStatus('error', 'Please enter your OTP code before continuing.');
@@ -99,8 +99,8 @@ fetchBtn.addEventListener('click', async () => {
     return;
   }
 
-  if (isCsvWeb && !until_date) {
-    showStatus('error', 'Please select an "until date" for web parsing.');
+  if (isCsvWeb && !from_date) {
+    showStatus('error', 'Please select a "from date" for web parsing.');
     return;
   }
 
@@ -123,7 +123,7 @@ fetchBtn.addEventListener('click', async () => {
       app_type,
     };
     if (isCsvWeb) {
-      bodyObj.until_date = until_date;
+      bodyObj.from_date = from_date;
     } else {
       bodyObj.statement_date = statement_date;
     }
@@ -253,18 +253,18 @@ function escapeHtml(str) {
   const account_uuid   = getCookie('bmo_account_uuid');
   const app_type       = getCookie('bmo_app_type');
   const statement_date = getCookie('bmo_statement_date');
-  const until_date     = getCookie('bmo_until_date');
+  const from_date     = getCookie('bmo_from_date');
   if (account_uuid)   document.getElementById('account_uuid').value   = account_uuid;
   if (app_type)       document.getElementById('app_type').value       = app_type;
   if (statement_date) document.getElementById('statement_date').value = statement_date;
-  if (until_date)     document.getElementById('until_date').value     = until_date;
+  if (from_date)     document.getElementById('from_date').value     = from_date;
 })();
 
 // ── CSV Web toggle ───────────────────────────────────────────────
 (function initCsvWebToggle() {
   const appTypeSelect    = document.getElementById('app_type');
   const statementGroup   = document.getElementById('statement-date-group');
-  const untilDateGroup   = document.getElementById('until-date-group');
+  const untilDateGroup   = document.getElementById('from-date-group');
 
   function toggle() {
     const isCsvWeb = appTypeSelect.value === 'csv_web';
