@@ -13,8 +13,6 @@ services:
     volumes:
       - "./pennyspy-data:/app/data"
     ports:
-      # Makes pennyspy api available at port 5056 of the device you run the server on,
-      # You can change the first number to change the port.
       - '5056:5056'
     restart: unless-stopped
     healthcheck:

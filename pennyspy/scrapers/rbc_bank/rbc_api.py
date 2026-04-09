@@ -21,7 +21,7 @@ class RbcDownloadParams(BaseModel):
 
 
 @router.get("/scrape")
-async def scrape_transactions(params: RbcDownloadParams = Depends(), background_tasks: BackgroundTasks | None = None):
+async def scrape_transactions(params: RbcDownloadParams = Depends(), background_tasks: BackgroundTasks):
     logger.info(params)
     logger.info(
         "Got scrape request for RBC with software : %s, account info : %s, include : %s",
@@ -46,7 +46,6 @@ async def scrape_transactions(params: RbcDownloadParams = Depends(), background_
     if transaction_file is None or not transaction_file.exists():
         shutil.rmtree(tmp_dirname)
         raise HTTPException(status_code=404, detail="Transaction file is not found")
-    if background_tasks is not None:
-        background_tasks.add_task(shutil.rmtree, tmp_dirname)
+    background_tasks.add_task(shutil.rmtree, tmp_dirname)
     bank.driver.quit()
     return FileResponse(path=transaction_file, filename=transaction_file.name, media_type="application/octet-stream")
