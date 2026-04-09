@@ -44,4 +44,5 @@ node_modules/
 
 # Docs (not needed at runtime)
 *.md
+!README.md
 docs/
