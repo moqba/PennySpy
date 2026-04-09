@@ -173,7 +173,7 @@ class BMOBank(Scraper):
 
     def parse_transactions_from_web(
         self,
-        until_date: datetime,
+        from_date: datetime,
         export_directory: Path | str | None = None,
     ) -> Path:
         assert self.driver is not None, "Driver is not available — was the browser closed?"
@@ -202,7 +202,7 @@ class BMOBank(Scraper):
                 sleep(1)
                 page_transactions = self._parse_posted_transactions_from_page()
             for txn_date, desc, amount in page_transactions:
-                if txn_date < until_date:
+                if txn_date < from_date:
                     reached_date_limit = True
                     continue
                 all_transactions.append((txn_date, desc, amount))
