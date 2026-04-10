@@ -1,3 +1,4 @@
+import logging
 import os
 import pathlib
 from datetime import date, datetime
@@ -9,6 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()  # noqa: E402
 
 import uvicorn
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -20,8 +22,11 @@ from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
 from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
 from pennyspy.scrapers.rbc_bank.request_options import AccountInfo, Include, Software
 from pennyspy.scrapers.router import create_scraper_router
+from pennyspy.scrapers.scotiabank.scotiabank import ScotiaBank
 from pennyspy.scrapers.session import ScraperSessionManager
 from pennyspy.scrapers.wealthsimple.wealthsimple import Wealthsimple
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
 
 logger = getLogger(__name__)
 
@@ -44,6 +49,16 @@ class RbcScrapeParams(BaseModel):
     software: Software
     account_info: AccountInfo
     include: Include
+
+
+class ScotiaLoginParams(BaseModel):
+    headless: bool = True
+
+
+class ScotiaScrapeParams(BaseModel):
+    session_id: str
+    from_date: date
+    to_date: date
 
 
 class WsScrapeParams(BaseModel):
@@ -76,6 +91,17 @@ app.include_router(
     ),
     prefix="/rbc",
     tags=["RBC"],
+)
+
+app.include_router(
+    create_scraper_router(
+        scraper_type=ScotiaBank,
+        login_params_model=ScotiaLoginParams,
+        scrape_params_model=ScotiaScrapeParams,
+        session_manager=session_manager,
+    ),
+    prefix="/scotia",
+    tags=["Scotiabank"],
 )
 
 app.include_router(

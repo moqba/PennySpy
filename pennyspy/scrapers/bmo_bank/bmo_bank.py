@@ -344,7 +344,7 @@ class BMOBank(BankScraper):
                 )
             )
         except TimeoutException as e:
-            self._save_screenshot("bmo_login_timeout")
+            self.save_screenshot("bmo_login_timeout")
             error_message = self._extract_login_error()
             if error_message:
                 raise TimeoutException(f"BMO login failed: {error_message}") from e
