@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import datetime
-from typing import Final
+from pathlib import Path
+from typing import Any, Final
 
 from bs4 import BeautifulSoup
 from pandas import DataFrame
@@ -12,12 +14,14 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
 
+from pennyspy.scrapers.base import AuthStep, BankScraper
 from pennyspy.scrapers.get_required_env_var import get_required_env_var
-from pennyspy.scrapers.scrapers import Scraper
+from pennyspy.scrapers.scraper import BrowserConfig
 from pennyspy.scrapers.wealthsimple.activity_fields import ActivityField
 from pennyspy.scrapers.wealthsimple.activity_id import ActivityXpath
 from pennyspy.scrapers.wealthsimple.connection_element_id import ActivityElementXpath, ConnectionElementXpath
 from pennyspy.scrapers.wealthsimple.delay_seconds import DelaySeconds
+from pennyspy.scrapers.wealthsimple.normalize_financial_data import normalize_financial_df
 
 WEALTHSIMPLE_ROOT: Final[str] = "https://my.wealthsimple.com"
 
@@ -92,16 +96,16 @@ def _parse_button_header(texts: list[str]) -> dict:
 
 
 def _looks_like_amount(text: str) -> bool:
-    import re
-
     return bool(re.search(r"\$[\d,]+", text))
 
 
-class Wealthsimple(Scraper):
-    def __init__(self, headless=True):
-        super().__init__(headless=headless)
+class Wealthsimple(BankScraper):
+    def __init__(self, config: BrowserConfig = BrowserConfig()):
+        super().__init__(config=config)
 
-    def login_request(self):
+    # ── BankScraper interface ──────────────────────────────────────────
+
+    def start_auth(self, **kwargs: Any) -> AuthStep:
         logger.info("Sending Login request")
         self.driver.get(WEALTHSIMPLE_LOGIN)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
@@ -109,8 +113,26 @@ class Wealthsimple(Scraper):
         password = get_required_env_var("PENNYSPY_WSP")
         self._login(username, password)
         self._check_for_wrong_login()
+        return AuthStep(status="needs_otp", message="Enter the OTP code sent to your phone")
 
-    def send_2fa_text(self, otp_code: str):
+    def continue_auth(self, *, otp_code: str | None = None) -> AuthStep:
+        assert otp_code is not None, "OTP code is required for Wealthsimple 2FA"
+        self._send_2fa_text(otp_code)
+        return AuthStep(status="authenticated")
+
+    def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
+        since_date: datetime | None = kwargs.get("since_date")
+        df = self.fetch_activity(since_date=since_date)
+        normalized = normalize_financial_df(df)
+        export_directory = Path(export_directory)
+        export_directory.mkdir(parents=True, exist_ok=True)
+        csv_path = export_directory / "wealthsimple_activity.csv"
+        normalized.to_csv(csv_path, index=False)
+        return csv_path
+
+    # ── Internal implementation ────────────────────────────────────────
+
+    def _send_2fa_text(self, otp_code: str):
         otp_field = self.driver.find_element(By.XPATH, ConnectionElementXpath.PHONE_2FA)
         if not otp_field:
             raise ValueError("No OTP detected")
@@ -121,12 +143,12 @@ class Wealthsimple(Scraper):
             WebDriverWait(self.driver, DelaySeconds.LOGIN_ATTEMPT).until(
                 EC.presence_of_element_located((By.XPATH, ConnectionElementXpath.FAILED_2FA))
             )
-            print("Error message appeared")
+            logger.error("2FA error message appeared")
             raise ValueError("OTP code didn't work")
         except TimeoutException:
             pass
         assert self.driver.current_url == WEALTHSIMPLE_HOME, "Failed to connect"
-        logging.info("Connection successful.")
+        logger.info("Connection successful.")
 
     def fetch_activity(self, since_date: datetime | None = None) -> DataFrame:
         self.open_activity()
@@ -201,6 +223,8 @@ class Wealthsimple(Scraper):
             index += 1
             try:
                 region_id = button.get_attribute("aria-controls")
+                if region_id is None:
+                    continue
 
                 # Skip activities older than since_date
                 if since_date and region_id in date_index and date_index[region_id] < since_date:

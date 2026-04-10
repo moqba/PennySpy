@@ -14,11 +14,12 @@ authors = [
 ]
 dependencies = [
     "beautifulsoup4",
-    "fake-useragent",
+    "browserforge>=1.2.4",
     "fastapi",
     "ofxtools",
     "pandas",
     "pydantic",
+    "python-dotenv>=1.2.2",
     "requests",
     "selenium",
     "uvicorn",
@@ -57,6 +58,7 @@ select = [
 ]
 ignore = [
     "E501",  # line too long (handled by formatter)
+    "E402",
 ]
 
 [tool.ruff.lint.isort]

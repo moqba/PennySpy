@@ -111,15 +111,29 @@ fetchBtn.addEventListener('click', async () => {
   }
 
   setFetching(true);
-  const statusMsg = isCsvWeb
-    ? 'Submitting OTP and parsing transactions from page — this may take several minutes…'
-    : 'Submitting OTP and downloading transactions — this may take a minute…';
-  showStatus('loading', statusMsg);
+  showStatus('loading', 'Submitting OTP…');
 
   try {
+    // Step 2a: verify OTP
+    const verifyRes = await fetch(`${BASE}/bmo/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, otp_code: otpCode }),
+    });
+
+    if (!verifyRes.ok) {
+      const err = await verifyRes.json().catch(() => ({ detail: `HTTP ${verifyRes.status}` }));
+      throw new Error(err.detail || `OTP verification failed (HTTP ${verifyRes.status})`);
+    }
+
+    // Step 2b: scrape transactions
+    const statusMsg = isCsvWeb
+      ? 'OTP accepted — parsing transactions from page, this may take several minutes…'
+      : 'OTP accepted — downloading transactions, this may take a minute…';
+    showStatus('loading', statusMsg);
+
     const bodyObj = {
       session_id: sessionId,
-      otp_code:   otpCode,
       app_type,
     };
     if (isCsvWeb) {

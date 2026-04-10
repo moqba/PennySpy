@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scotiabank — PennySpy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="page">
+  <div class="container">
+
+    <a href="index.html" class="back-link">Home</a>
+
+    <div class="card">
+      <div class="card__header">
+        <span class="card__badge card__badge--scotia">BNS</span>
+        <div>
+          <h1 class="page-title">Scotiabank</h1>
+          <p class="page-subtitle">Approve 2-step verification in your Scotiabank mobile app</p>
+        </div>
+      </div>
+
+      <div class="form-block">
+        <div class="form-group">
+          <label class="form-label" for="from_date">From Date</label>
+          <input id="from_date" class="input-otp" type="date">
+        </div>
+
+        <div class="form-group">
+          <label class="form-label" for="to_date">To Date</label>
+          <input id="to_date" class="input-otp" type="date">
+        </div>
+      </div>
+
+      <button id="fetch-btn" class="btn btn--primary btn--full btn--mt">
+        Download Statements
+      </button>
+
+      <p class="info-row">Browser automation will open — approve 2SV on your Scotiabank mobile app when prompted</p>
+
+      <div id="status" hidden></div>
+    </div>
+
+  </div>
+  <script src="scotia.js"></script>
+</body>
+</html>

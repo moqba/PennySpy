@@ -25,6 +25,10 @@
   --bmo-blue-dim: #005F9E;
   --bmo-glow:     rgba(0, 117, 190, 0.15);
   --bmo-glow-2:   rgba(0, 117, 190, 0.06);
+  --scotia-red:     #EC111A;
+  --scotia-red-dim: #C00E16;
+  --scotia-glow:    rgba(236, 17, 26, 0.15);
+  --scotia-glow-2:  rgba(236, 17, 26, 0.06);
 
   --text:         #C8D4EC;
   --text-muted:   #4A5878;
@@ -195,6 +199,7 @@ body::before {
 .bank-card--rbc::after { background: var(--rbc-glow-2); }
 .bank-card--ws::after  { background: var(--ws-glow-2); }
 .bank-card--bmo::after { background: var(--bmo-glow-2); }
+.bank-card--scotia::after { background: var(--scotia-glow-2); }
 
 .bank-card:hover {
   transform: translateY(-2px);
@@ -213,6 +218,11 @@ body::before {
 .bank-card--bmo:hover {
   border-color: var(--bmo-blue);
   box-shadow: 0 0 0 1px var(--bmo-blue), 0 8px 32px rgba(0, 117, 190, 0.15);
+}
+
+.bank-card--scotia:hover {
+  border-color: var(--scotia-red);
+  box-shadow: 0 0 0 1px var(--scotia-red), 0 8px 32px rgba(236, 17, 26, 0.15);
 }
 
 .bank-card:hover::after { opacity: 1; }
@@ -246,6 +256,12 @@ body::before {
   border: 1px solid rgba(0, 117, 190, 0.25);
 }
 
+.bank-card--scotia .bank-card__badge {
+  background: rgba(236, 17, 26, 0.12);
+  color: var(--scotia-red);
+  border: 1px solid rgba(236, 17, 26, 0.25);
+}
+
 .bank-card__name {
   font-family: var(--font-display);
   font-size: 22px;
@@ -273,6 +289,7 @@ body::before {
 .bank-card--rbc:hover .bank-card__arrow { color: var(--rbc-blue); transform: translateX(3px); }
 .bank-card--ws:hover  .bank-card__arrow { color: var(--ws-green); transform: translateX(3px); }
 .bank-card--bmo:hover .bank-card__arrow { color: var(--bmo-blue); transform: translateX(3px); }
+.bank-card--scotia:hover .bank-card__arrow { color: var(--scotia-red); transform: translateX(3px); }
 
 /* ─── CARD ──────────────────────────────────────────────────────── */
 .card {
@@ -319,6 +336,12 @@ body::before {
   background: rgba(0, 117, 190, 0.12);
   color: var(--bmo-blue);
   border: 1px solid rgba(0, 117, 190, 0.25);
+}
+
+.card__badge--scotia {
+  background: rgba(236, 17, 26, 0.12);
+  color: var(--scotia-red);
+  border: 1px solid rgba(236, 17, 26, 0.25);
 }
 
 /* ─── FORM ELEMENTS ─────────────────────────────────────────────── */
