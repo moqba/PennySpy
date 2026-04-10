@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import logging
 import shutil
 import zipfile
@@ -24,7 +25,8 @@ from pennyspy.scrapers.scraper import BrowserConfig, create_browser
 SCOTIA_HOME_URL: Final[str] = "https://www.scotiabank.com/ca/en/personal.html"
 SCOTIA_SIGN_IN_LINK: Final[str] = "//a[contains(@class, 'btn-signin')]"
 SCOTIA_SUCCESS_DOMAIN: Final[str] = "secure.scotiabank.com"
-SCOTIA_SUMMARY_URL: Final[str] = "https://secure.scotiabank.com/my-accounts/api/summary"
+SCOTIA_SUMMARY_URL: Final[str] = "https://secure.scotiabank.com/api/accounts/summary"
+SCOTIA_TRANSACTIONS_URL: Final[str] = "https://secure.scotiabank.com/api/transactions/transaction-history"
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ class ScotiaBank(BankScraper):
             return self._do_start_auth()
         except Exception:
             logger.exception("start_auth failed — saving screenshot")
-            self.save_screenshot("scotia_start_auth_error")
+            self._save_screenshot("scotia_start_auth_error")
             raise
 
     def _do_start_auth(self) -> AuthStep:
@@ -87,19 +89,15 @@ class ScotiaBank(BankScraper):
             self._capture_cookies()
             return AuthStep(status="authenticated")
 
-        return AuthStep(
-            status="waiting_for_external",
-            message="Approve the sign-in request in your Scotiabank mobile app.",
-        )
+        # 2sv-confirmation page means user already approved on phone —
+        # just need to click continue (and optionally trust this device)
+        logger.info("2SV confirmed — handling trust device and continuing")
+        self._handle_trust_device()
+        self._capture_cookies()
+        return AuthStep(status="authenticated")
 
     def continue_auth(self, *, otp_code: str | None = None) -> AuthStep:
-        logger.info("continue_auth called — current URL: %s", self.driver.current_url)
-        if self.cookies is not None:
-            logger.info("Already authenticated — skipping 2SV wait")
-            return AuthStep(status="authenticated")
-
-        self._wait_for_2sv_completion()
-        self._capture_cookies()
+        logger.info("continue_auth called — already authenticated")
         return AuthStep(status="authenticated")
 
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
@@ -112,11 +110,13 @@ class ScotiaBank(BankScraper):
         for account in accounts:
             account_key = account["key"]
             display_id = account.get("displayId", "unknown")
+            account_type = self._resolve_account_type(account)
             description = account.get("description", "")
-            logger.info("Processing account %s (%s)", display_id, description)
+            logger.info("Processing account %s (%s, type=%s)", display_id, description, account_type)
             try:
-                file_path = self._download_statement_for_account(
+                file_path = self._download_transactions_for_account(
                     account_key=account_key,
+                    account_type=account_type,
                     display_id=display_id,
                     from_date=from_date,
                     to_date=to_date,
@@ -124,21 +124,21 @@ class ScotiaBank(BankScraper):
                 )
                 downloaded.append(file_path)
             except ValueError as e:
-                logger.warning("No statements for account %s: %s", display_id, e)
+                logger.warning("No transactions for account %s: %s", display_id, e)
 
         if not downloaded:
-            raise ValueError(f"No statements found for any account between {from_date} and {to_date}")
+            raise ValueError(f"No transactions found for any account between {from_date} and {to_date}")
 
         if len(downloaded) == 1:
             return downloaded[0]
 
         # Multiple files — zip them together
         today_str = date.today().isoformat()
-        zip_path = export_directory / f"scotiabank_statements_{today_str}.zip"
+        zip_path = export_directory / f"scotiabank_transactions_{today_str}.zip"
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
             for f in downloaded:
                 zf.write(f, f.name)
-        logger.info("Zipped %d statement(s) into %s", len(downloaded), zip_path)
+        logger.info("Zipped %d file(s) into %s", len(downloaded), zip_path)
         return zip_path
 
     # ── Internal implementation ────────────────────────────────────────
@@ -164,7 +164,7 @@ class ScotiaBank(BankScraper):
             WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
                 EC.visibility_of_element_located((By.XPATH, ConnectionElementId.LOGIN_ERROR))
             )
-            self.save_screenshot("scotia_wrong_login")
+            self._save_screenshot("scotia_wrong_login")
             raise ValueError("Username and password seem to be invalid, failed to connect.")
         except TimeoutException:
             logger.info("No error banner detected — credentials appear valid")
@@ -180,13 +180,10 @@ class ScotiaBank(BankScraper):
         logger.info("Waiting for 2SV or direct success (timeout: %ds)...", DelaySeconds.LOGIN_SUCCESS_TIMEOUT)
         try:
             WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(
-                lambda d: (
-                    SCOTIA_SUCCESS_DOMAIN in d.current_url
-                    or "2sv-confirmation" in d.current_url
-                ),
+                lambda d: SCOTIA_SUCCESS_DOMAIN in d.current_url or "2sv-confirmation" in d.current_url,
             )
         except TimeoutException as e:
-            self.save_screenshot("scotia_login_timeout")
+            self._save_screenshot("scotia_login_timeout")
             raise TimeoutException("Scotiabank login timed out after credentials") from e
 
         current = self.driver.current_url
@@ -198,39 +195,25 @@ class ScotiaBank(BankScraper):
         logger.info("2SV waiting page detected — URL: %s", current)
         return "2sv"
 
-    def _wait_for_2sv_completion(self) -> None:
-        """Wait for user to approve 2SV, then handle trust device and continue."""
-        logger.info("Waiting for 2SV approval on Scotiabank mobile app (timeout: %ds)...", DelaySeconds.TWO_FACTOR_TIMEOUT)
-
-        # Wait for the trust device checkbox to appear (signals phone approval)
-        try:
-            WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CHECKBOX)),
-            )
-        except TimeoutException as e:
-            # Maybe already redirected past 2SV
-            if SCOTIA_SUCCESS_DOMAIN in self.driver.current_url and "2sv" not in self.driver.current_url:
-                logger.info("Already on success page — URL: %s", self.driver.current_url)
-                return
-            logger.error("2SV timed out — current URL: %s", self.driver.current_url)
-            self.save_screenshot("scotia_2sv_timeout")
-            raise TimeoutException("Scotiabank 2SV timed out — user did not approve in time") from e
-
-        logger.info("2SV approved — handling trust device")
-        self._handle_trust_device()
-
     def _handle_trust_device(self) -> None:
-        logger.info("Looking for trust device checkbox")
-        checkbox = WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CHECKBOX))
-        )
-        logger.info("Checking 'trust this device' checkbox")
-        checkbox.click()
+        try:
+            checkbox = WebDriverWait(self.driver, DelaySeconds.COOKIE_INIT).until(
+                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CHECKBOX))
+            )
+            logger.info("Checking 'trust this device' checkbox")
+            checkbox.click()
+        except TimeoutException:
+            logger.info("No trust device checkbox found — skipping")
 
         logger.info("Clicking continue button")
-        self.driver.find_element(By.XPATH, ConnectionElementId.TRUST_DEVICE_CONTINUE).click()
+        continue_btn = WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
+            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CONTINUE))
+        )
+        continue_btn.click()
 
-        logger.info("Waiting for redirect to %s (timeout: %ds)", SCOTIA_SUCCESS_DOMAIN, DelaySeconds.LOGIN_SUCCESS_TIMEOUT)
+        logger.info(
+            "Waiting for redirect to %s (timeout: %ds)", SCOTIA_SUCCESS_DOMAIN, DelaySeconds.LOGIN_SUCCESS_TIMEOUT
+        )
         WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(
             EC.url_contains(SCOTIA_SUCCESS_DOMAIN),
         )
@@ -255,9 +238,21 @@ class ScotiaBank(BankScraper):
         assert resp.status_code == HTTPStatus.OK, (
             f"Failed to fetch account summary: {resp.status_code} {resp.text[:200]}"
         )
-        products = resp.json()["data"]["accounts"]["products"]
+        products: list[dict[str, Any]] = resp.json()["data"]["products"]
         logger.info("Found %d account(s)", len(products))
         return products
+
+    _PRODUCT_CATEGORY_MAP: dict[str, str] = {
+        "CREDITCARDS": "CREDIT",
+        "DAYTODAY": "DAYTODAY",
+        "BORROWING": "CREDIT",
+    }
+
+    @classmethod
+    def _resolve_account_type(cls, account: dict[str, Any]) -> str:
+        """Map account productCategory to the accountType query param for the transactions API."""
+        category = (account.get("productCategory") or "").upper()
+        return cls._PRODUCT_CATEGORY_MAP.get(category, "DAYTODAY")
 
     def _build_session(self) -> requests.Session:
         assert self.cookies is not None, "Cookies have not been captured yet."
@@ -266,9 +261,10 @@ class ScotiaBank(BankScraper):
             session.cookies.set(cookie["name"], cookie["value"])
         return session
 
-    def _download_statement_for_account(
+    def _download_transactions_for_account(
         self,
         account_key: str,
+        account_type: str,
         display_id: str,
         from_date: date,
         to_date: date,
@@ -277,49 +273,90 @@ class ScotiaBank(BankScraper):
         export_directory.mkdir(parents=True, exist_ok=True)
         session = self._build_session()
 
-        # Step 1: List statements for the account in the date range
-        statements_url = "https://secure.scotiabank.com/api/statements"
-        params = {
-            "accountKey": account_key,
+        url = f"{SCOTIA_TRANSACTIONS_URL}/{account_key}"
+        params: dict[str, str] = {
+            "accountType": account_type,
             "fromDate": from_date.isoformat(),
             "toDate": to_date.isoformat(),
         }
-        logger.info("Fetching statement list for account %s", display_id)
-        resp = session.get(statements_url, params=params)
-        assert resp.status_code == HTTPStatus.OK, (
-            f"Failed to list statements: {resp.status_code} {resp.text[:200]}"
-        )
 
-        statements = resp.json().get("data", [])
-        if not statements:
-            raise ValueError(
-                f"No statements found for account {display_id} "
-                f"between {from_date} and {to_date}"
+        transactions: list[dict[str, Any]] = []
+        page = 1
+        while True:
+            logger.info("Fetching transactions for account %s page %d", display_id, page)
+            resp = session.get(url, params=params)
+            assert resp.status_code == HTTPStatus.OK, (
+                f"Failed to fetch transactions: {resp.status_code} {resp.text[:200]}"
             )
 
-        # Use the most recent statement
-        statement_key = statements[0]["key"]
-        logger.info(
-            "Found %d statement(s) for account %s — downloading dated %s",
-            len(statements),
-            display_id,
-            statements[0].get("statementDate", "unknown"),
-        )
+            payload = resp.json()
+            transactions.extend(self._extract_transactions(payload))
 
-        # Step 2: Download the statement CSV
-        download_url = f"https://secure.scotiabank.com/api/statements/{statement_key}"
-        logger.info("Downloading statement CSV for account %s", display_id)
-        dl_resp = session.get(download_url)
-        assert dl_resp.status_code == HTTPStatus.OK, (
-            f"Failed to download statement: {dl_resp.status_code} {dl_resp.text[:200]}"
-        )
+            cursor = payload.get("nextCursorKey")
+            if not cursor:
+                break
+            params["cursor"] = cursor
+            page += 1
+
+        if not transactions:
+            raise ValueError(f"No transactions found for account {display_id} between {from_date} and {to_date}")
+
+        logger.info("Found %d transaction(s) for account %s across %d page(s)", len(transactions), display_id, page)
+
+        headers = [
+            "Date", "PostedDate", "TransactionType", "Description", "Details",
+            "Category", "MerchantName", "MerchantCity", "MerchantState",
+            "MerchantCountry", "MerchantCategoryCode", "Amount", "Currency",
+            "Balance", "Status", "PurchaseType", "TransactionId",
+        ]
+        rows: list[list[str]] = []
+        for txn in transactions:
+            merchant = txn.get("merchant") or {}
+            amount_obj = txn.get("transactionAmount") or {}
+            balance_obj = txn.get("balance") or txn.get("runningBalance") or {}
+            rows.append([
+                txn.get("transactionDate", ""),
+                txn.get("postedDate", txn.get("dateInserted", "")),
+                txn.get("transactionType", ""),
+                txn.get("description", ""),
+                (txn.get("subdescription") or "").strip(),
+                (txn.get("transactionCategory") or txn.get("type") or "").strip(),
+                (merchant.get("name") or "").strip(),
+                (merchant.get("city") or "").strip(),
+                (merchant.get("state") or "").strip(),
+                (merchant.get("countryCode") or "").strip(),
+                merchant.get("categoryCode") or "",
+                str(amount_obj.get("amount", "")),
+                amount_obj.get("currencyCode", "CAD"),
+                str(balance_obj.get("amount", "")),
+                txn.get("status") or "",
+                txn.get("purchaseType") or "",
+                txn.get("transactionId") or "",
+            ])
 
         today_str = date.today().isoformat()
         filename = f"scotiabank_{display_id}_{today_str}.csv"
         file_path = export_directory / filename
-        file_path.write_bytes(dl_resp.content)
-        logger.info("Statement saved: %s (%d bytes)", file_path, len(dl_resp.content))
+
+        with open(file_path, "w", newline="", encoding="utf-8") as f:
+            writer = csv.writer(f)
+            writer.writerow(headers)
+            writer.writerows(rows)
+
+        logger.info("Transactions saved: %s (%d rows)", file_path, len(rows))
         return file_path
+
+    @staticmethod
+    def _extract_transactions(payload: dict[str, Any]) -> list[dict[str, Any]]:
+        """Handle both day-to-day (flat array) and credit (pending/settled) response shapes."""
+        data = payload.get("data", [])
+        if isinstance(data, list):
+            return data
+        # Credit accounts: data has "pending" and "settled" keys
+        transactions: list[dict[str, Any]] = []
+        transactions.extend(data.get("settled", []))
+        transactions.extend(data.get("pending", []))
+        return transactions
 
     def _capture_cookies(self) -> None:
         logger.info("Navigating to %s to prime session cookies", SCOTIA_SUMMARY_URL)

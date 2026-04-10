@@ -102,7 +102,7 @@ class RBCBank(BankScraper):
                 EC.url_contains("summary"), message="Timeout waiting for 2FA"
             )
         except TimeoutException as e:
-            self.save_screenshot("timeout_2fa")
+            self._save_screenshot("timeout_2fa")
             raise TimeoutException from e
         logger.info("Connected.")
 

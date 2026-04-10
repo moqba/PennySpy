@@ -5,9 +5,9 @@ import tempfile
 from dataclasses import asdict
 from logging import getLogger
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
@@ -46,12 +46,13 @@ def create_scraper_router(
             raise HTTPException(status_code=404, detail=str(e))
 
     if login_params_model is not None:
-        _login_model = login_params_model
 
         @router.post("/login")
-        def login_with_params(params: _login_model) -> dict[str, Any]:  # type: ignore[valid-type]
+        def login_with_params(
+            params: Annotated[BaseModel, Body()],
+        ) -> dict[str, Any]:
             scraper = scraper_type()
-            login_kwargs = params.model_dump()  # type: ignore[attr-defined]
+            login_kwargs = params.model_dump()
             try:
                 step = scraper.start_auth(**login_kwargs)
             except Exception as e:
@@ -60,6 +61,9 @@ def create_scraper_router(
             session_id = session_manager.create(scraper)
             logger.info("Login initiated, session_id=%s", session_id)
             return {"session_id": session_id, **asdict(step)}
+
+        # Override the endpoint's JSON schema to use the concrete model
+        login_with_params.__annotations__["params"] = Annotated[login_params_model, Body()]
 
     else:
 
@@ -76,7 +80,7 @@ def create_scraper_router(
             return {"session_id": session_id, **asdict(step)}
 
     @router.post("/verify")
-    def verify(params: VerifyParams) -> dict[str, Any]:
+    def verify(params: Annotated[VerifyParams, Body()]) -> dict[str, Any]:
         scraper = _get_scraper(params.session_id)
         try:
             step = scraper.continue_auth(otp_code=params.otp_code)
@@ -85,11 +89,12 @@ def create_scraper_router(
             raise HTTPException(status_code=400, detail=str(e))
         return {"session_id": params.session_id, **asdict(step)}
 
-    _scrape_model = scrape_params_model
-
     @router.post("/scrape")
-    def scrape(params: _scrape_model, background_tasks: BackgroundTasks) -> FileResponse:  # type: ignore[valid-type]
-        scrape_kwargs: dict[str, Any] = params.model_dump()  # type: ignore[attr-defined]
+    def scrape(
+        params: Annotated[BaseModel, Body()],
+        background_tasks: BackgroundTasks,
+    ) -> FileResponse:
+        scrape_kwargs: dict[str, Any] = params.model_dump()
         session_id: str = scrape_kwargs.pop("session_id")
 
         scraper = _get_scraper(session_id)
@@ -121,5 +126,8 @@ def create_scraper_router(
             filename=transaction_file.name,
             media_type="application/octet-stream",
         )
+
+    # Override the scrape endpoint's annotation to use the concrete model
+    scrape.__annotations__["params"] = Annotated[scrape_params_model, Body()]
 
     return router

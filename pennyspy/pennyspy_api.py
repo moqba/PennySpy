@@ -10,7 +10,6 @@ from dotenv import load_dotenv
 load_dotenv()  # noqa: E402
 
 import uvicorn
-from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
@@ -41,7 +40,7 @@ class BmoScrapeParams(BaseModel):
     session_id: str
     app_type: AppType
     statement_date: StatementDate | None = None
-    until_date: datetime | None = None
+    from_date: datetime | None = None
 
 
 class RbcScrapeParams(BaseModel):
@@ -49,10 +48,6 @@ class RbcScrapeParams(BaseModel):
     software: Software
     account_info: AccountInfo
     include: Include
-
-
-class ScotiaLoginParams(BaseModel):
-    headless: bool = True
 
 
 class ScotiaScrapeParams(BaseModel):
@@ -96,7 +91,6 @@ app.include_router(
 app.include_router(
     create_scraper_router(
         scraper_type=ScotiaBank,
-        login_params_model=ScotiaLoginParams,
         scrape_params_model=ScotiaScrapeParams,
         session_manager=session_manager,
     ),

@@ -11,21 +11,28 @@ const getCookie = (name) => {
   return match ? decodeURIComponent(match[1]) : null;
 };
 
-const SOFTWARE_EXTENSION = {
-  EXCEL: 'csv',
-  QUICKEN: 'ofx',
-  QUICKBOOKS: 'qbo',
-  MONEY: 'ofx',
-  MAKISOFT: 'afx',
-  MAKISOFTB: 'afx',
-  SIMPLYACCOUNTING: 'aso',
-};
-
 let sessionId  = null;
 let isFetching = false;
 
-const fetchBtn = document.getElementById('fetch-btn');
-const statusEl = document.getElementById('status');
+const fetchBtn   = document.getElementById('fetch-btn');
+const statusEl   = document.getElementById('status');
+const fromDateEl = document.getElementById('from_date');
+const toDateEl   = document.getElementById('to_date');
+
+// ── Set default dates ────────────────────────────────────────────
+(function setDefaults() {
+  const today = new Date();
+  toDateEl.value = today.toISOString().split('T')[0];
+
+  const threeMonthsAgo = new Date(today);
+  threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+  fromDateEl.value = threeMonthsAgo.toISOString().split('T')[0];
+
+  const savedFrom = getCookie('scotia_from_date');
+  const savedTo   = getCookie('scotia_to_date');
+  if (savedFrom) fromDateEl.value = savedFrom;
+  if (savedTo)   toDateEl.value = savedTo;
+})();
 
 // ── Beforeunload guard ────────────────────────────────────────────
 window.addEventListener('beforeunload', (e) => {
@@ -39,20 +46,23 @@ window.addEventListener('beforeunload', (e) => {
 fetchBtn.addEventListener('click', async () => {
   if (isFetching) return;
 
-  const software     = document.getElementById('software').value;
-  const account_info = document.getElementById('account_info').value;
-  const include      = document.getElementById('include').value;
+  const fromDate = fromDateEl.value;
+  const toDate   = toDateEl.value;
 
-  setCookie('rbc_software', software);
-  setCookie('rbc_account_info', account_info);
-  setCookie('rbc_include', include);
+  if (!fromDate || !toDate) {
+    showStatus('error', 'Please select both a from date and a to date.');
+    return;
+  }
+
+  setCookie('scotia_from_date', fromDate);
+  setCookie('scotia_to_date', toDate);
 
   setFetching(true);
-  showStatus('loading', 'Connecting to RBC — logging in…');
+  showStatus('loading', 'Connecting to Scotiabank — logging in…');
 
   try {
     // Step 1: login
-    const loginRes = await fetch(`${BASE}/rbc/login`, { method: 'POST' });
+    const loginRes = await fetch(`${BASE}/scotia/login`, { method: 'POST' });
 
     if (!loginRes.ok) {
       const err = await loginRes.json().catch(() => ({ detail: `HTTP ${loginRes.status}` }));
@@ -62,28 +72,19 @@ fetchBtn.addEventListener('click', async () => {
     const loginData = await loginRes.json();
     sessionId = loginData.session_id;
 
-    // Step 2: verify (waits for external 2FA approval)
-    showStatus('loading', 'Approve 2-step verification on your RBC app or device…');
+    // Login handles 2SV inline (waits for phone approval + clicks continue)
+    showStatus('loading', 'Authenticated — downloading statements…');
 
-    const verifyRes = await fetch(`${BASE}/rbc/verify`, {
+    const res = await fetch(`${BASE}/scotia/scrape`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId }),
+      body: JSON.stringify({ session_id: sessionId, from_date: fromDate, to_date: toDate }),
     });
 
-    if (!verifyRes.ok) {
-      const err = await verifyRes.json().catch(() => ({ detail: `HTTP ${verifyRes.status}` }));
-      throw new Error(err.detail || `Verification failed (HTTP ${verifyRes.status})`);
+    if (res.status === 404) {
+      const err = await res.json().catch(() => ({ detail: 'Session not found — please try again.' }));
+      throw new Error(err.detail || 'Session expired');
     }
-
-    // Step 3: scrape
-    showStatus('loading', 'Authenticated — downloading transactions…');
-
-    const res = await fetch(`${BASE}/rbc/scrape`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, software, account_info, include }),
-    });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: `HTTP ${res.status} — ${res.statusText}` }));
@@ -91,19 +92,13 @@ fetchBtn.addEventListener('click', async () => {
     }
 
     const blob = await res.blob();
-    const ext = SOFTWARE_EXTENSION[software] || 'dat';
-    const filename = getFilenameFromResponse(res) || `rbc_${software.toLowerCase()}_${today()}.${ext}`;
+    const filename = getFilenameFromResponse(res) || `scotiabank_${today()}.csv`;
     triggerDownload(blob, filename);
     showStatus('success', `File downloaded — ${filename}`);
-
-    const isOfx = ['QUICKEN', 'MONEY'].includes(software);
-    if (isOfx) {
-      const ofxText = await blob.text();
-      QfxFilter.initUI(document.getElementById('qfx-filter-section'), ofxText, filename);
-    }
   } catch (err) {
     showStatus('error', err.message);
   } finally {
+    sessionId = null;
     setFetching(false);
   }
 });
@@ -112,9 +107,8 @@ fetchBtn.addEventListener('click', async () => {
 function setFetching(active) {
   isFetching = active;
   fetchBtn.disabled = active;
-
-  const selects = document.querySelectorAll('select');
-  selects.forEach(s => { s.disabled = active; });
+  fromDateEl.disabled = active;
+  toDateEl.disabled = active;
 }
 
 // ── Status display ────────────────────────────────────────────────
@@ -158,13 +152,3 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
-
-// ── Restore saved selections ──────────────────────────────────────
-(function restoreSelections() {
-  const software     = getCookie('rbc_software');
-  const account_info = getCookie('rbc_account_info');
-  const include      = getCookie('rbc_include');
-  if (software)     document.getElementById('software').value     = software;
-  if (account_info) document.getElementById('account_info').value = account_info;
-  if (include)      document.getElementById('include').value      = include;
-})();

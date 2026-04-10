@@ -109,17 +109,30 @@ fetchBtn.addEventListener('click', async () => {
   }
 
   setFetching(true);
-  showStatus('loading', 'Submitting OTP and fetching activity data — this may take a minute…');
+  showStatus('loading', 'Submitting OTP…');
 
   try {
+    // Step 2a: verify OTP
+    const verifyRes = await fetch(`${BASE}/ws/verify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session_id: sessionId, otp_code: otpCode }),
+    });
+
+    if (!verifyRes.ok) {
+      const err = await verifyRes.json().catch(() => ({ detail: `HTTP ${verifyRes.status}` }));
+      throw new Error(err.detail || `OTP verification failed (HTTP ${verifyRes.status})`);
+    }
+
+    // Step 2b: scrape transactions
+    showStatus('loading', 'OTP accepted — fetching activity data, this may take a minute…');
+
     const res = await fetch(`${BASE}/ws/scrape`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         session_id: sessionId,
-        otp_code:   otpCode,
         since_date: sinceDate,
-        format:     'csv',
       }),
     });
 

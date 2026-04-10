@@ -73,10 +73,10 @@ class BMOBank(BankScraper):
 
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
         app_type: AppType = kwargs["app_type"]
-        if kwargs.get("until_date") is not None:
+        if kwargs.get("from_date") is not None:
             # Web scraping path — uses the live browser, no cookies needed
             return self._parse_transactions_from_web(
-                until_date=kwargs["until_date"],
+                from_date=kwargs["from_date"],
                 export_directory=export_directory,
             )
         # API path — capture cookies if not already done (no-2FA path captures early)
@@ -203,11 +203,9 @@ class BMOBank(BankScraper):
     def _parse_transactions_from_web(
         self,
         from_date: datetime,
-        export_directory: Path | None = None,
+        export_directory: Path,
     ) -> Path:
         assert self._account_uuid is not None
-
-        export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
 
         account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
@@ -344,7 +342,7 @@ class BMOBank(BankScraper):
                 )
             )
         except TimeoutException as e:
-            self.save_screenshot("bmo_login_timeout")
+            self._save_screenshot("bmo_login_timeout")
             error_message = self._extract_login_error()
             if error_message:
                 raise TimeoutException(f"BMO login failed: {error_message}") from e
