@@ -17,7 +17,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from pennyspy.scrapers.base import AuthStep, BankScraper
-from pennyspy.scrapers.get_required_env_var import get_required_env_var
+from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
 from pennyspy.scrapers.scotiabank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.scotiabank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.scraper import BrowserConfig, create_browser
@@ -143,15 +143,15 @@ class ScotiaBank(BankScraper):
 
     # ── Internal implementation ────────────────────────────────────────
 
-    def _login(self, username: str, password: str) -> None:
+    def _login(self, username: SecretString, password: SecretString) -> None:
         logger.info("Looking for username field")
         username_field = self.driver.find_element(By.XPATH, ConnectionElementId.USERNAME)
         logger.info("Username field found — filling credentials")
-        username_field.send_keys(username)
+        username_field.send_keys(username.reveal())
 
         password_field = self.driver.find_element(By.XPATH, ConnectionElementId.PASSWORD)
         logger.info("Password field found — filling password")
-        password_field.send_keys(password)
+        password_field.send_keys(password.reveal())
 
         sign_in_btn = self.driver.find_element(By.XPATH, ConnectionElementId.SIGN_IN)
         logger.info("Sign-in button found — clicking")

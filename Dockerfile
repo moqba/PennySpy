@@ -37,7 +37,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:${PATH}" \
     CHROME_USER_DATA_DIR=/home/pennyspy/chrome-user-data \
-    PENNYSPY_PORT=5056
+    PENNYSPY_PORT=5056 \
+    PENNYSPY_LOG_DIR=/app/data/logs
 
 # Runtime libs Chrome needs + minimal tooling for the install step.
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -78,7 +79,9 @@ RUN groupadd --system --gid 1000 pennyspy \
     && useradd --system --uid 1000 --gid pennyspy --create-home --shell /usr/sbin/nologin pennyspy \
     && mkdir -p "${CHROME_USER_DATA_DIR}" \
     && chown -R pennyspy:pennyspy "${CHROME_USER_DATA_DIR}" \
-    && chmod 700 "${CHROME_USER_DATA_DIR}"
+    && chmod 700 "${CHROME_USER_DATA_DIR}" \
+    && mkdir -p /app/data/logs \
+    && chown -R pennyspy:pennyspy /app/data
 
 COPY --from=builder /opt/venv /opt/venv
 

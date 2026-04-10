@@ -56,6 +56,7 @@ def create_scraper_router(
             try:
                 step = scraper.start_auth(**login_kwargs)
             except Exception as e:
+                logger.exception("%s login failed", scraper_type.__name__)
                 scraper.quit()
                 raise HTTPException(status_code=400, detail=str(e))
             session_id = session_manager.create(scraper)
@@ -73,6 +74,7 @@ def create_scraper_router(
             try:
                 step = scraper.start_auth()
             except Exception as e:
+                logger.exception("%s login failed", scraper_type.__name__)
                 scraper.quit()
                 raise HTTPException(status_code=400, detail=str(e))
             session_id = session_manager.create(scraper)
@@ -106,10 +108,12 @@ def create_scraper_router(
                 **scrape_kwargs,
             )
         except ValueError as e:
+            logger.exception("%s scrape validation error for session %s", scraper_type.__name__, session_id)
             session_manager.remove(session_id)
             shutil.rmtree(tmp_dir, ignore_errors=True)
             raise HTTPException(status_code=400, detail=str(e))
         except Exception as e:
+            logger.exception("%s scrape failed for session %s", scraper_type.__name__, session_id)
             session_manager.remove(session_id)
             shutil.rmtree(tmp_dir, ignore_errors=True)
             raise HTTPException(status_code=500, detail=str(e))
