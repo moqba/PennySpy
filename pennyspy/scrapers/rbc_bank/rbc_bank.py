@@ -5,7 +5,7 @@ import re
 from http import HTTPStatus
 from pathlib import Path
 from time import sleep
-from typing import Final
+from typing import Any, Final
 
 import requests
 from selenium.common import TimeoutException
@@ -13,12 +13,13 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+from pennyspy.scrapers.base import AuthStep, BankScraper
 from pennyspy.scrapers.get_required_env_var import get_required_env_var
 from pennyspy.scrapers.rbc_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.rbc_bank.get_default_filename import get_default_filename
 from pennyspy.scrapers.rbc_bank.request_options import AccountInfo, Include, Software
-from pennyspy.scrapers.scrapers import Scraper
+from pennyspy.scrapers.scraper import BrowserConfig
 
 RBC_MAINPAGE: Final[str] = (
     "https://www1.royalbank.com/cgi-bin/rbaccess/rbunxcgi?F6=1&F7=IB&F21=IB&F22=IB&REQUEST=ClientSignin&LANGUAGE=ENGLISH"
@@ -27,12 +28,14 @@ RBC_MAINPAGE: Final[str] = (
 logger = logging.getLogger(__name__)
 
 
-class RBCBank(Scraper):
-    def __init__(self, headless=True):
-        super().__init__(headless=headless)
-        self.cookies = None
+class RBCBank(BankScraper):
+    def __init__(self, config: BrowserConfig = BrowserConfig()):
+        super().__init__(config=config)
+        self.cookies: list[dict] | None = None
 
-    def get_session_cookies(self):
+    # ── BankScraper interface ──────────────────────────────────────────
+
+    def start_auth(self, **kwargs: Any) -> AuthStep:
         logger.info("Getting session cookies")
         self.driver.get(RBC_MAINPAGE)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
@@ -41,11 +44,31 @@ class RBCBank(Scraper):
         self._login(username, password)
         self._check_for_wrong_login()
         self._accept_cookies_if_visible()
+        return AuthStep(
+            status="waiting_for_external",
+            message="Complete 2-step verification in your RBC app or device. "
+            "The /verify call will block until completed (up to 5 minutes).",
+        )
+
+    def continue_auth(self, *, otp_code: str | None = None) -> AuthStep:
         self._wait_for_2fa()
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         sleep(DelaySeconds.COOKIE_INIT)
         self.cookies = self.driver.get_cookies()
-        self.driver.close()
+        return AuthStep(status="authenticated")
+
+    def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
+        software: Software = kwargs["software"]
+        account_info: AccountInfo = kwargs["account_info"]
+        include: Include = kwargs["include"]
+        return self._download_transactions(
+            software=software,
+            account_info=account_info,
+            include=include,
+            export_directory=export_directory,
+        )
+
+    # ── Internal implementation ────────────────────────────────────────
 
     def _login(self, username, password):
         logger.info("logging in...")
@@ -83,13 +106,13 @@ class RBCBank(Scraper):
             raise TimeoutException from e
         logger.info("Connected.")
 
-    def download_transactions(
+    def _download_transactions(
         self,
         software: Software,
         account_info: AccountInfo,
         include: Include,
         export_directory: Path | str | None = None,
-    ) -> Path | None:
+    ) -> Path:
         assert self.cookies is not None, (
             "Cookies have not been fetched yet, cannot download transactions. Please fetch cookies first."
         )
