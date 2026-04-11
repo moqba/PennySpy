@@ -8,6 +8,7 @@ Canadian bank transaction scraper with API endpoints for automated retrieval of 
 - RBC bank
 - Wealthsimple
 - BMO bank
+- Scotiabank
 
 # Installation
 ## Docker
@@ -32,12 +33,19 @@ Pennyspy can be installed a python package :
 This allows you to run the scraper directly in Python :
 ```python
 # This example is for RBC bank scraper, for more details about RBC setup consult the RBC bank section
+from pathlib import Path
 from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
 from pennyspy.scrapers.rbc_bank.request_options import Software, AccountInfo, Include
 
 bank = RBCBank()
-bank.get_session_cookies()
-bank.download_transactions(software=Software.CSV, account_info=AccountInfo.PRIMARY_CHECKING, include=Include.ALL_OPERATIONS)
+bank.start_auth()       # submits credentials, waits for mobile 2FA prompt
+bank.continue_auth()    # blocks until you approve 2FA in your RBC app
+bank.download_transactions(
+    export_directory=Path("."),
+    software=Software.CSV,
+    account_info=AccountInfo.PRIMARY_CHECKING,
+    include=Include.ALL_OPERATIONS,
+)
 ```
 
 Or start the [API service](#API) after installing the Python package :
@@ -60,5 +68,5 @@ For Wealthsimple setup and API details, consult the [Wealthsimple setup guide](p
 
 For BMO bank setup and API details, consult the [BMO setup guide](pennyspy/scrapers/bmo_bank/setup.md).
 
-
+For Scotiabank setup and API details, consult the [Scotiabank setup guide](pennyspy/scrapers/scotiabank/setup.md).
 

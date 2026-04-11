@@ -1,6 +1,7 @@
 # Usage
 > [!important]
-The scraper uses OTP-based phone 2FA. After calling `/bmo/login`, check your phone for a code and pass it to `/bmo/scrape` within the 10-minute session timeout.
+The scraper uses OTP-based phone 2FA. After calling `/bmo/login`, check your phone for a code and pass it
+to `/bmo/verify` within the 10-minute session timeout. Once verified, call `/bmo/scrape` to download transactions.
 >
 
 Regardless of the installation method, the following env variables are required:
@@ -12,10 +13,11 @@ It is recommended to make an `.env` file containing these.
 
 ## BMO API
 
-Because BMO requires a manual OTP, the flow is split across two endpoints:
+Because BMO requires a manual OTP, the flow is split across three endpoints:
 
 1. **`POST /bmo/login`** — Launches a browser session, submits credentials, and triggers the OTP to be sent to your phone. Returns a `session_id` to use in the next step.
-2. **`POST /bmo/scrape`** — Submits the OTP, downloads or scrapes transactions, and returns a file.
+2. **`POST /bmo/verify`** — Submits the OTP code to complete 2FA authentication.
+3. **`POST /bmo/scrape`** — Downloads or scrapes transactions and returns a file.
 
 ---
 
@@ -33,7 +35,30 @@ Initiate a BMO login. Credentials are read from environment variables.
 
 ```json
 {
-  "session_id": "550e8400-e29b-41d4-a716-446655440000"
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "needs_otp"
+}
+```
+
+---
+
+#### `POST /bmo/verify`
+
+Submit the OTP code to complete 2FA.
+
+**Request body (JSON):**
+
+| Name       | Type   | Required | Description                               |
+|------------|--------|----------|-------------------------------------------|
+| session_id | string | yes      | Session ID returned by `/bmo/login`       |
+| otp_code   | string | yes      | OTP code sent to your phone               |
+
+**Response:**
+
+```json
+{
+  "session_id": "550e8400-e29b-41d4-a716-446655440000",
+  "status": "authenticated"
 }
 ```
 
@@ -41,17 +66,16 @@ Initiate a BMO login. Credentials are read from environment variables.
 
 #### `POST /bmo/scrape`
 
-Complete the 2FA and retrieve transactions as a downloadable file.
+Retrieve transactions as a downloadable file.
 
 **Request body (JSON):**
 
-| Name           | Type   | Required            | Description                                                                 |
-|----------------|--------|---------------------|-----------------------------------------------------------------------------|
-| session_id     | string | yes                 | Session ID returned by `/bmo/login`                                         |
-| otp_code       | string | yes                 | OTP code sent to your phone                                                 |
-| app_type       | string | yes                 | Export format — see [AppType](#apptype)                                     |
-| statement_date | string | if not `csv_web`    | Statement period to export — see [StatementDate](#statementdate)            |
-| until_date     | string | if `csv_web`        | Fetch transactions on or after this date (`YYYY-MM-DD`), web-parsed         |
+| Name           | Type   | Required         | Description                                                                 |
+|----------------|--------|------------------|-----------------------------------------------------------------------------|
+| session_id     | string | yes              | Session ID returned by `/bmo/login`                                         |
+| app_type       | string | yes              | Export format — see [AppType](#apptype)                                     |
+| statement_date | string | if not `csv_web` | Statement period to export — see [StatementDate](#statementdate)            |
+| from_date      | string | if `csv_web`     | Fetch transactions on or after this date (`YYYY-MM-DD`), web-parsed         |
 
 **Response:** A downloadable file whose name and format depend on the selected `app_type`.
 
@@ -69,14 +93,14 @@ Complete the 2FA and retrieve transactions as a downloadable file.
 
 ### AppType
 
-| Name       | Value        | Extension | Notes                                      |
-|------------|--------------|-----------|--------------------------------------------|
-| CSV        | `"csv"`      | .csv      | Downloaded via API                         |
-| CSV_WEB    | `"csv_web"`  | .csv      | Parsed from the web UI; requires `until_date` |
-| MSMONEY    | `"msmoney"`  | .ofx      |                                            |
-| QUICKEN    | `"quicken"`  | .qfx      |                                            |
-| QUICKBOOKS | `"quickbooks"`| .qbo     |                                            |
-| SIMPLY_ACC | `"simplyacc"`| .aso      |                                            |
+| Name       | Value         | Extension | Notes                                         |
+|------------|---------------|-----------|-----------------------------------------------|
+| CSV        | `"csv"`       | .csv      | Downloaded via API                            |
+| CSV_WEB    | `"csv_web"`   | .csv      | Parsed from the web UI; requires `from_date`  |
+| MSMONEY    | `"msmoney"`   | .ofx      |                                               |
+| QUICKEN    | `"quicken"`   | .qfx      |                                               |
+| QUICKBOOKS | `"quickbooks"`| .qbo      |                                               |
+| SIMPLY_ACC | `"simplyacc"` | .aso      |                                               |
 
 ### StatementDate
 
@@ -90,26 +114,30 @@ Complete the 2FA and retrieve transactions as a downloadable file.
 # Python call
 
 ```python
+from pathlib import Path
 from pennyspy.scrapers.bmo_bank.bmo_bank import BMOBank
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
 
 bank = BMOBank()
 
 # Replace with your credit card account UUID (visible in the BMO URL when viewing account details)
-bank.initiate_login(account_uuid="your-account-uuid-here")
+bank.start_auth(account_uuid="your-account-uuid-here")
 
 otp = input("Enter OTP code sent to your phone: ")
-bank.complete_2fa(otp)
+bank.continue_auth(otp_code=otp)
 
 # Download via API (requires statement_date)
-file_path = bank.download_transactions(
+bank.download_transactions(
+    export_directory=Path("."),
     app_type=AppType.QUICKEN,
     statement_date=StatementDate.ALL,
 )
 
-# Or parse directly from the web UI (requires until_date)
+# Or parse directly from the web UI (requires from_date)
 from datetime import datetime
-file_path = bank.parse_transactions_from_web(
-    until_date=datetime(2025, 1, 1),
+bank.download_transactions(
+    export_directory=Path("."),
+    app_type=AppType.CSV_WEB,
+    from_date=datetime(2025, 1, 1),
 )
 ```
