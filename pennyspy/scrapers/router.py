@@ -51,6 +51,7 @@ def create_scraper_router(
         def login_with_params(
             params: Annotated[BaseModel, Body()],
         ) -> dict[str, Any]:
+            session_manager.close_all()
             scraper = scraper_type()
             login_kwargs = params.model_dump()
             try:
@@ -70,6 +71,7 @@ def create_scraper_router(
 
         @router.post("/login")
         def login_no_params() -> dict[str, Any]:
+            session_manager.close_all()
             scraper = scraper_type()
             try:
                 step = scraper.start_auth()

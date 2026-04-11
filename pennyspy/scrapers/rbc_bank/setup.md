@@ -116,23 +116,3 @@ Download transactions as a file.
 |----------------|-------|
 | NEW_OPERATIONS | `"N"` |
 | ALL_OPERATIONS | `"A"` |
-
----
-
-# Python call
-
-```python
-from pathlib import Path
-from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
-from pennyspy.scrapers.rbc_bank.request_options import Software, AccountInfo, Include
-
-bank = RBCBank()
-bank.start_auth()    # submits credentials, triggers mobile 2FA prompt
-bank.continue_auth() # blocks until you approve in your RBC app (up to 5 min)
-bank.download_transactions(
-    export_directory=Path("."),
-    software=Software.CSV,
-    account_info=AccountInfo.PRIMARY_CHECKING,
-    include=Include.ALL_OPERATIONS,
-)
-```
