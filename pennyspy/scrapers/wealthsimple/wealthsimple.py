@@ -15,7 +15,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.wait import WebDriverWait
 
 from pennyspy.scrapers.base import AuthStep, BankScraper
-from pennyspy.scrapers.get_required_env_var import get_required_env_var
+from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
 from pennyspy.scrapers.scraper import BrowserConfig
 from pennyspy.scrapers.wealthsimple.activity_fields import ActivityField
 from pennyspy.scrapers.wealthsimple.activity_id import ActivityXpath
@@ -291,10 +291,10 @@ class Wealthsimple(BankScraper):
                         activity[label.value] = value_p.text.strip()
         return activity
 
-    def _login(self, username: str, password: str):
+    def _login(self, username: SecretString, password: SecretString):
         logger.info("logging in...")
-        self.driver.find_element(By.XPATH, ConnectionElementXpath.USERNAME).send_keys(username)
-        self.driver.find_element(By.XPATH, ConnectionElementXpath.PASSWORD).send_keys(password)
+        self.driver.find_element(By.XPATH, ConnectionElementXpath.USERNAME).send_keys(username.reveal())
+        self.driver.find_element(By.XPATH, ConnectionElementXpath.PASSWORD).send_keys(password.reveal())
         self.driver.find_element(By.XPATH, ConnectionElementXpath.SUBMIT).click()
 
     def _check_for_wrong_login(self):

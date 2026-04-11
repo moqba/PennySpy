@@ -600,6 +600,51 @@ body::before {
 
 input[type="date"] { color-scheme: dark; }
 
+/* ─── LOGS FAB ──────────────────────────────────────────────────── */
+.logs-fab {
+  position: fixed;
+  right: 16px;
+  bottom: 14px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-decoration: none;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  transition: color var(--transition), border-color var(--transition);
+  z-index: 50;
+}
+.logs-fab:hover { color: var(--text); border-color: var(--border-2); }
+
+/* ─── LOGS VIEWER ───────────────────────────────────────────────── */
+.logs-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.logs-toolbar .form-group { flex: 1 1 220px; margin: 0; }
+.logs-output {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.logs-empty { color: var(--text-muted); font-style: italic; }
+
 /* ─── RESPONSIVE ────────────────────────────────────────────────── */
 @media (max-width: 480px) {
   .bank-cards { grid-template-columns: 1fr; }

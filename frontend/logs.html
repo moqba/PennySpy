@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Logs — PennySpy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="page">
+  <div class="container">
+
+    <a href="index.html" class="back-link">Home</a>
+
+    <div class="card">
+      <div class="card__header">
+        <div>
+          <h1 class="page-title">Application Logs</h1>
+          <p class="page-subtitle">View and clear the PennySpy log files stored on the server</p>
+        </div>
+      </div>
+
+      <div class="logs-toolbar">
+        <div class="form-group">
+          <label class="form-label" for="log-file">Log File</label>
+          <select id="log-file" class="select"></select>
+        </div>
+        <button id="refresh-btn" class="btn btn--ghost">Refresh</button>
+        <button id="delete-btn" class="btn btn--primary">Delete All</button>
+      </div>
+
+      <pre id="log-output" class="logs-output logs-empty">Loading…</pre>
+    </div>
+
+  </div>
+  <script src="logs.js"></script>
+</body>
+</html>

@@ -22,7 +22,7 @@ from pennyspy.scrapers.bmo_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.bmo_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.bmo_bank.get_default_filename import get_default_filename
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
-from pennyspy.scrapers.get_required_env_var import get_required_env_var
+from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
 from pennyspy.scrapers.scraper import BrowserConfig
 
 BMO_LOGIN_URL: Final[str] = "https://www1.bmo.com/banking/digital/login"
@@ -312,10 +312,10 @@ class BMOBank(BankScraper):
 
         return transactions
 
-    def _login(self, username: str, password: str) -> None:
+    def _login(self, username: SecretString, password: SecretString) -> None:
         logger.info("Filling login credentials")
-        self.driver.find_element(By.XPATH, ConnectionElementId.USERNAME).send_keys(username)
-        self.driver.find_element(By.XPATH, ConnectionElementId.PASSWORD).send_keys(password)
+        self.driver.find_element(By.XPATH, ConnectionElementId.USERNAME).send_keys(username.reveal())
+        self.driver.find_element(By.XPATH, ConnectionElementId.PASSWORD).send_keys(password.reveal())
         self._dismiss_cookie_banner()
         self.driver.find_element(By.XPATH, ConnectionElementId.SIGN_IN).click()
 

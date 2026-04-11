@@ -14,7 +14,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from pennyspy.scrapers.base import AuthStep, BankScraper
-from pennyspy.scrapers.get_required_env_var import get_required_env_var
+from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
 from pennyspy.scrapers.rbc_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.rbc_bank.get_default_filename import get_default_filename
@@ -70,10 +70,10 @@ class RBCBank(BankScraper):
 
     # ── Internal implementation ────────────────────────────────────────
 
-    def _login(self, username, password):
+    def _login(self, username: SecretString, password: SecretString):
         logger.info("logging in...")
-        self.driver.find_element(By.ID, ConnectionElementId.USERNAME).send_keys(username)
-        self.driver.find_element(By.ID, ConnectionElementId.PASSWORD).send_keys(password)
+        self.driver.find_element(By.ID, ConnectionElementId.USERNAME).send_keys(username.reveal())
+        self.driver.find_element(By.ID, ConnectionElementId.PASSWORD).send_keys(password.reveal())
         self.driver.find_element(By.ID, ConnectionElementId.PASSWORD).submit()
 
     def _accept_cookies_if_visible(self):
