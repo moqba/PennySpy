@@ -1,6 +1,6 @@
 'use strict';
 
-const BASE = 'http://localhost:5056';
+const BASE = '';
 
 // ── Cookie helpers ────────────────────────────────────────────────
 const setCookie = (name, value) =>
