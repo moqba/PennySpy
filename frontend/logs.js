@@ -1,6 +1,6 @@
 'use strict';
 
-const BASE = 'http://localhost:5056';
+const BASE = '';
 
 const selectEl = document.getElementById('log-file');
 const outputEl = document.getElementById('log-output');

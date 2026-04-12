@@ -1,7 +1,7 @@
 'use strict';
 
 (function () {
-  const HEALTH_URL = (typeof BASE !== 'undefined' ? BASE : 'http://localhost:5056') + '/health';
+  const HEALTH_URL = (typeof BASE !== 'undefined' ? BASE : '') + '/health';
   const POLL_INTERVAL = 15_000;
 
   let alertEl = null;
