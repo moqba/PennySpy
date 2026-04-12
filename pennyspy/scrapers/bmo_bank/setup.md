@@ -4,6 +4,10 @@ The scraper uses OTP-based phone 2FA. After calling `/bmo/login`, check your pho
 to `/bmo/verify` within the 10-minute session timeout. Once verified, call `/bmo/scrape` to download transactions.
 >
 
+> [!important]
+The scraper now only supports credit cards.
+>
+
 Regardless of the installation method, the following env variables are required:
 ```dotenv
 PENNYSPY_BMOU="bmo_username"
@@ -11,6 +15,9 @@ PENNYSPY_BMOPP="bmo_password"
 ```
 It is recommended to make an `.env` file containing these.
 
+For the account_uid, refer to the [login section of the api](#uuid_guide).
+
+The API exposes BMO’s native download request interface. However, the transaction export format differs between the official web/mobile UI and the raw BMO download endpoints. To address this, a CSV_WEB option has been introduced, which parses data directly from the UI layer and produces a CSV that closely matches what users see in their online banking interface.
 ## BMO API
 
 Because BMO requires a manual OTP, the flow is split across three endpoints:
@@ -20,10 +27,12 @@ Because BMO requires a manual OTP, the flow is split across three endpoints:
 3. **`POST /bmo/scrape`** — Downloads or scrapes transactions and returns a file.
 
 ---
-
 #### `POST /bmo/login`
 
 Initiate a BMO login. Credentials are read from environment variables.
+
+<a id="**uuid_guide**"></a>
+The account_uuid can be found on the BMO website. When selecting the specific account of interest. the URL would contain the account_uuid as such : `https://www1.bmo.com/banking/digital/account-details/cc/<account_uuid>`
 
 **Request body (JSON):**
 
@@ -93,14 +102,14 @@ Retrieve transactions as a downloadable file.
 
 ### AppType
 
-| Name       | Value         | Extension | Notes                                         |
-|------------|---------------|-----------|-----------------------------------------------|
-| CSV        | `"csv"`       | .csv      | Downloaded via API                            |
-| CSV_WEB    | `"csv_web"`   | .csv      | Parsed from the web UI; requires `from_date`  |
-| MSMONEY    | `"msmoney"`   | .ofx      |                                               |
-| QUICKEN    | `"quicken"`   | .qfx      |                                               |
-| QUICKBOOKS | `"quickbooks"`| .qbo      |                                               |
-| SIMPLY_ACC | `"simplyacc"` | .aso      |                                               |
+| Name       | Value         | Extension | Notes                                                             |
+|------------|---------------|-----------|-------------------------------------------------------------------|
+| CSV        | `"csv"`       | .csv      | Downloaded via API                                                |
+| CSV_WEB    | `"csv_web"`   | .csv      | (recommended option) Parsed from the web UI; requires `from_date` |
+| MSMONEY    | `"msmoney"`   | .ofx      |                                                                   |
+| QUICKEN    | `"quicken"`   | .qfx      |                                                                   |
+| QUICKBOOKS | `"quickbooks"`| .qbo      |                                                                   |
+| SIMPLY_ACC | `"simplyacc"` | .aso      |                                                                   |
 
 ### StatementDate
 

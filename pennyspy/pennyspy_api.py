@@ -173,6 +173,11 @@ def delete_logs() -> dict:
     return {"deleted": deleted}
 
 
+@app.get("/health", tags=["Health"])
+def health_check():
+    return {"status": "ok"}
+
+
 @app.get("/", include_in_schema=False)
 def read_root():
     return RedirectResponse(url="/app/index.html")
