@@ -4,15 +4,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Canadian bank transaction scraper with API endpoints for automated retrieval of transaction history. Can be self-hosted on your computer directly via a Docker image or accessed directly through Python for seamless integration.
+
+Running locally gives you full control over when and how data is retrieved. You can trigger requests on demand, making it fully compatible with modern banking security flows such as one-time passwords (OTP) and push-based two-factor authentication (2FA).
 # Supported banks
 - RBC bank
 - Wealthsimple
 - BMO bank
 - Scotiabank
 
+The API provides a landing page that allows users to easily download their transaction history.
+![api_landing_page](doc/landing_page.png)
+
 # Installation
-## Docker
-Pennyspy api is also available as a Docker image ready to be run in your own custom environment.
+## Docker (Recommended)
+Pennyspy api is available as a Docker image ready to be run in your own custom environment.
 ### Launch container using Docker Compose
 You can use the `docker-compose.yml` file included in the repository to run the latest stable version of the API.
 To create and run the container, you should use an `.env` file for your credentials or pass directly the credentials under the `docker-compose.yml` file:
@@ -30,23 +35,7 @@ docker run --restart=unless-stopped -d -p 5056:5056 -v YOUR/PATH/TO/DATA:/pennys
 ## Python package
 Pennyspy can be installed a python package :  
 `pip install git+https://github.com/moqba/PennySpy`  
-This allows you to run the scraper directly in Python :
-```python
-# This example is for RBC bank scraper, for more details about RBC setup consult the RBC bank section
-from pathlib import Path
-from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
-from pennyspy.scrapers.rbc_bank.request_options import Software, AccountInfo, Include
-
-bank = RBCBank()
-bank.start_auth()       # submits credentials, waits for mobile 2FA prompt
-bank.continue_auth()    # blocks until you approve 2FA in your RBC app
-bank.download_transactions(
-    export_directory=Path("."),
-    software=Software.CSV,
-    account_info=AccountInfo.PRIMARY_CHECKING,
-    include=Include.ALL_OPERATIONS,
-)
-```
+This allows you to run the scraper directly in Python.
 
 Or start the [API service](#API) after installing the Python package :
 ```shell

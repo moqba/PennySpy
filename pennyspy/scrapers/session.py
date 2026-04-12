@@ -44,6 +44,18 @@ class ScraperSessionManager:
             except Exception:
                 logger.debug("Error quitting scraper for session %s", session_id, exc_info=True)
 
+    def close_all(self) -> None:
+        if not self._sessions:
+            return
+        count = len(self._sessions)
+        for session_id, (scraper, _, _) in self._sessions.items():
+            try:
+                scraper.quit()
+            except Exception:
+                logger.warning("Error quitting scraper for session %s", session_id, exc_info=True)
+        self._sessions.clear()
+        logger.info("Closed %d active scraper session(s)", count)
+
     def _cleanup_stale(self) -> None:
         now = time.monotonic()
         stale = [sid for sid, (_, _, ts) in self._sessions.items() if now - ts > self._ttl]
