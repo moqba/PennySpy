@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -120,8 +120,14 @@ class Wealthsimple(BankScraper):
         self._send_2fa_text(otp_code)
         return AuthStep(status="authenticated")
 
+    @staticmethod
+    def _normalize_date(d: datetime | date | None) -> datetime | None:
+        if isinstance(d, date) and not isinstance(d, datetime):
+            return datetime(d.year, d.month, d.day)
+        return d
+
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
-        since_date: datetime | None = kwargs.get("since_date")
+        since_date = self._normalize_date(kwargs.get("since_date"))
         df = self.fetch_activity(since_date=since_date)
         normalized = normalize_financial_df(df)
         export_directory = Path(export_directory)
