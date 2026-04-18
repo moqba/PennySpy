@@ -244,6 +244,8 @@ class Wealthsimple(BankScraper):
                     )
                 activity_div = self.driver.find_element(By.ID, region_id)
                 activity = self.get_activity_html_soup(activity_div)
+                if activity.get(ActivityField.STATUS.value) == "Cancelled":
+                    continue
                 # Enrich with ticker / type / payee from the button header
                 btn_ps = button.find_elements(By.XPATH, ".//p")
                 btn_texts = [p.text.strip() for p in btn_ps if p.text.strip()]
