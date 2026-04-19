@@ -54,6 +54,50 @@ WEALTHSIMPLE_ACTIVITY: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/activity"
 logger = logging.getLogger(__name__)
 
 
+def parse_button_texts(button_inner_html: str) -> list[str]:
+    """Extract non-empty <p> text contents from a button's innerHTML, in document order."""
+    soup = BeautifulSoup(button_inner_html, "html.parser")
+    return [p.get_text(strip=True) for p in soup.find_all("p") if p.get_text(strip=True)]
+
+
+def parse_region_html(region_inner_html: str) -> dict:
+    """Extract ActivityField values from the expanded region's innerHTML."""
+    soup = BeautifulSoup(region_inner_html, "html.parser")
+    activity: dict = {}
+    _synthetic = {ActivityField.TICKER, ActivityField.BUTTON_PAYEE, ActivityField.BUTTON_AMOUNT}
+    for label in ActivityField:
+        if label in _synthetic:
+            continue
+        label_elem = soup.find("p", {"data-fs-privacy-rule": "unmask"}, string=lambda s, lbl=label: s and s.strip() == lbl)
+        if label_elem and label_elem.parent and label_elem.parent.parent:
+            row_div = label_elem.parent.parent  # p -> div.hQERxA -> div.lizokw
+            value_div = row_div.find("div", class_="gQehiP")
+            if value_div:
+                value_p = value_div.find("p")
+                if value_p and hasattr(value_p, "text"):
+                    activity[label.value] = value_p.text.strip()
+    return activity
+
+
+def build_activity_row(button_inner_html: str, region_inner_html: str) -> dict | None:
+    """Full per-transaction parse: region fields + button-header enrichment, with Cancelled-skip.
+
+    Returns None if the row should be dropped (Cancelled status)."""
+    activity = parse_region_html(region_inner_html)
+    if activity.get(ActivityField.STATUS.value) == "Cancelled":
+        return None
+    meta = _parse_button_header(parse_button_texts(button_inner_html))
+    if meta.get("ticker") and not activity.get(ActivityField.TICKER.value):
+        activity[ActivityField.TICKER.value] = meta["ticker"]
+    if meta.get("payee") and not activity.get(ActivityField.BUTTON_PAYEE.value):
+        activity[ActivityField.BUTTON_PAYEE.value] = meta["payee"]
+    if meta.get("type") and not activity.get(ActivityField.TYPE.value):
+        activity[ActivityField.TYPE.value] = meta["type"]
+    if meta.get("button_amount") and not activity.get(ActivityField.BUTTON_AMOUNT.value):
+        activity[ActivityField.BUTTON_AMOUNT.value] = meta["button_amount"]
+    return activity or None
+
+
 def _parse_button_header(texts: list[str]) -> dict:
     """Extract ticker, transaction type, payee, and amount from button header <p> texts.
 
@@ -227,6 +271,7 @@ class Wealthsimple(BankScraper):
                 break
             button = buttons[index]
             index += 1
+            region_id: str | None = None
             try:
                 region_id = button.get_attribute("aria-controls")
                 if region_id is None:
@@ -239,29 +284,22 @@ class Wealthsimple(BankScraper):
                 if button.get_attribute("aria-expanded") != "true":
                     self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
                     button.click()
+                    # Wait for region content to render, not just element presence —
+                    # "In progress" transactions have a lazily-populated region.
                     WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-                        EC.presence_of_element_located((By.ID, region_id))
+                        EC.presence_of_element_located(
+                            (By.XPATH, f'//*[@id="{region_id}"]//p[@data-fs-privacy-rule="unmask"]')
+                        )
                     )
                 activity_div = self.driver.find_element(By.ID, region_id)
-                activity = self.get_activity_html_soup(activity_div)
-                if activity.get(ActivityField.STATUS.value) == "Cancelled":
-                    continue
-                # Enrich with ticker / type / payee from the button header
-                btn_ps = button.find_elements(By.XPATH, ".//p")
-                btn_texts = [p.text.strip() for p in btn_ps if p.text.strip()]
-                meta = _parse_button_header(btn_texts)
-                if meta.get("ticker") and not activity.get(ActivityField.TICKER.value):
-                    activity[ActivityField.TICKER.value] = meta["ticker"]
-                if meta.get("payee") and not activity.get(ActivityField.BUTTON_PAYEE.value):
-                    activity[ActivityField.BUTTON_PAYEE.value] = meta["payee"]
-                if meta.get("type") and not activity.get(ActivityField.TYPE.value):
-                    activity[ActivityField.TYPE.value] = meta["type"]
-                if meta.get("button_amount") and not activity.get(ActivityField.BUTTON_AMOUNT.value):
-                    activity[ActivityField.BUTTON_AMOUNT.value] = meta["button_amount"]
+                activity = build_activity_row(
+                    button.get_attribute("innerHTML") or "",
+                    activity_div.get_attribute("innerHTML") or "",
+                )
                 if activity:
                     rows.append(activity)
             except Exception as e:
-                logger.exception(e)
+                logger.exception("Failed to process activity %s: %s", region_id, e)
 
         return DataFrame(rows, columns=[field.value for field in ActivityField])
 
@@ -281,23 +319,7 @@ class Wealthsimple(BankScraper):
         return activity
 
     def get_activity_html_soup(self, activity_div):
-        html = activity_div.get_attribute("innerHTML")
-        soup = BeautifulSoup(html, "html.parser")
-        activity = {}
-        _synthetic = {ActivityField.TICKER, ActivityField.BUTTON_PAYEE}
-        for label in ActivityField:
-            if label in _synthetic:
-                continue
-            label_elem = soup.find("p", {"data-fs-privacy-rule": "unmask"}, string=lambda s: s and s.strip() == label)
-            if label_elem and label_elem.parent and label_elem.parent.parent:
-                row_div = label_elem.parent.parent  # p -> div.hQERxA -> div.lizokw
-                # Value container uses class "gQehiP" regardless of privacy rule
-                value_div = row_div.find("div", class_="gQehiP")
-                if value_div:
-                    value_p = value_div.find("p")
-                    if value_p and hasattr(value_p, "text"):
-                        activity[label.value] = value_p.text.strip()
-        return activity
+        return parse_region_html(activity_div.get_attribute("innerHTML") or "")
 
     def _login(self, username: SecretString, password: SecretString):
         logger.info("logging in...")
