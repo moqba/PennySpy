@@ -147,6 +147,8 @@ def _normalize_simple(row: pd.Series, tx_type: str) -> dict | None:
             payee = to
 
     account = _get(row, "Account")
+    if not account:
+        account = _get(row, "From")
     raw = _get(row, "Amount") or _get(row, "Total")
     amount = parse_amount(raw)
     notes = tx_type
