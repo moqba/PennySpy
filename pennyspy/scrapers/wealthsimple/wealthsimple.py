@@ -55,9 +55,16 @@ logger = logging.getLogger(__name__)
 
 
 def parse_button_texts(button_inner_html: str) -> list[str]:
-    """Extract non-empty <p> text contents from a button's innerHTML, in document order."""
+    """Extract non-empty button-header text values in document order.
+
+    Filters by data-fs-privacy-rule="unmask" so the status badge span
+    (e.g. "Pending", "In progress") is excluded — it never carries that attribute."""
     soup = BeautifulSoup(button_inner_html, "html.parser")
-    return [p.get_text(strip=True) for p in soup.find_all("p") if p.get_text(strip=True)]
+    return [
+        el.get_text(strip=True)
+        for el in soup.find_all(["p", "span"], {"data-fs-privacy-rule": "unmask"})
+        if el.get_text(strip=True)
+    ]
 
 
 def parse_region_html(region_inner_html: str) -> dict:
@@ -68,14 +75,18 @@ def parse_region_html(region_inner_html: str) -> dict:
     for label in ActivityField:
         if label in _synthetic:
             continue
-        label_elem = soup.find("p", {"data-fs-privacy-rule": "unmask"}, string=lambda s, lbl=label: s and s.strip() == lbl)
+        label_elem = soup.find(
+            ["p", "span"],
+            {"data-fs-privacy-rule": "unmask"},
+            string=lambda s, lbl=label: s and s.strip() == lbl,
+        )
         if label_elem and label_elem.parent and label_elem.parent.parent:
-            row_div = label_elem.parent.parent  # p -> div.hQERxA -> div.lizokw
+            row_div = label_elem.parent.parent  # p/span -> div.hQERxA -> div.lizokw
             value_div = row_div.find("div", class_="gQehiP")
             if value_div:
-                value_p = value_div.find("p")
-                if value_p and hasattr(value_p, "text"):
-                    activity[label.value] = value_p.text.strip()
+                value_el = value_div.find(["p", "span"])
+                if value_el and hasattr(value_el, "text"):
+                    activity[label.value] = value_el.text.strip()
     return activity
 
 
@@ -288,7 +299,10 @@ class Wealthsimple(BankScraper):
                     # "In progress" transactions have a lazily-populated region.
                     WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
                         EC.presence_of_element_located(
-                            (By.XPATH, f'//*[@id="{region_id}"]//p[@data-fs-privacy-rule="unmask"]')
+                            (
+                                By.XPATH,
+                                f'//*[@id="{region_id}"]//*[(self::p or self::span) and @data-fs-privacy-rule="unmask"]',
+                            )
                         )
                     )
                 activity_div = self.driver.find_element(By.ID, region_id)
