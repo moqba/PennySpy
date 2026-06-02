@@ -16,13 +16,15 @@ from selenium.webdriver.remote.webdriver import WebDriver
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
+DEFAULT_HEADLESS: bool = False
+
 
 @dataclass(frozen=True)
 class BrowserConfig:
     """Per-scraper browser configuration."""
 
     browser: Literal["chrome", "firefox"] = "chrome"
-    headless: bool = True
+    headless: bool = DEFAULT_HEADLESS
     extra_arguments: list[str] = field(default_factory=list)
 
 

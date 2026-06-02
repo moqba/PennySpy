@@ -187,7 +187,8 @@ class Wealthsimple(BankScraper):
         normalized = normalize_financial_df(df)
         export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
-        csv_path = export_directory / "wealthsimple_activity.csv"
+        suffix = f"_{normalized['Date'].iloc[0].strftime('%Y-%m-%d')}" if not normalized.empty else ""
+        csv_path = export_directory / f"wealthsimple_activity{suffix}.csv"
         normalized.to_csv(csv_path, index=False)
         return csv_path
 
@@ -217,9 +218,12 @@ class Wealthsimple(BankScraper):
 
     def open_activity(self):
         self.driver.get(WEALTHSIMPLE_ACTIVITY)
-        WebDriverWait(self.driver, 20).until(
-            EC.visibility_of_element_located((By.XPATH, ActivityElementXpath.LOAD_MORE))
-        )
+        try:
+            WebDriverWait(self.driver, 20).until(
+                EC.visibility_of_element_located((By.XPATH, ActivityElementXpath.LOAD_MORE))
+            )
+        except TimeoutException as e:
+            raise TimeoutException("Couldn't find the button 'Load more'") from e
 
     def _get_oldest_visible_activity_date(self) -> datetime | None:
         headers = self.driver.find_elements(By.XPATH, ActivityXpath.DATE_HEADER)
@@ -264,9 +268,12 @@ class Wealthsimple(BankScraper):
 
     def _expand_and_get_all_activity(self, since_date: datetime | None = None) -> DataFrame:
         # Wait for at least one header button to confirm the activity list is loaded
-        WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-            EC.presence_of_element_located((By.XPATH, ActivityXpath.TRANSACTION_EXPENSION))
-        )
+        try:
+            WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
+                EC.presence_of_element_located((By.XPATH, ActivityXpath.TRANSACTION_EXPENSION))
+            )
+        except TimeoutException as e:
+            raise TimeoutException("Couldn't expand activities to fetch.") from e
 
         if since_date:
             self._load_more_until(since_date)

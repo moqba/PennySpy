@@ -11,4 +11,4 @@ class ConnectionElementXpath(StrEnum):
 
 
 class ActivityElementXpath(StrEnum):
-    LOAD_MORE = '//button[text()="Load more"]'
+    LOAD_MORE = '//button[@role="button" and .//span[normalize-space()="Load more"]]'
