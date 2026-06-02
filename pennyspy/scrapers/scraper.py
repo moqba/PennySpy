@@ -16,7 +16,7 @@ from selenium.webdriver.remote.webdriver import WebDriver
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-DEFAULT_HEADLESS: bool = False
+DEFAULT_HEADLESS: bool = True
 
 
 @dataclass(frozen=True)
