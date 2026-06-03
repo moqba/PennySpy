@@ -13,8 +13,8 @@ class ConnectionElementId(StrEnum):
     MFA_AGREE_CHECKBOX = "//label[contains(@class,'checkbox-label')]//input[@type='checkbox']"
     MFA_SEND_CODE = "//otp-button//button[.//span[contains(@class,'text') and normalize-space(text())='SEND CODE']]"
     OTP_INPUT = "//input[@id='otp-input']"
-    MFA_CONFIRM = "//otp-button//button[.//span[contains(@class,'text') and normalize-space(text())='CONFIRM']]"
-    MFA_CONTINUE = "//button[contains(@class,'mercury') and .//span[contains(@class,'inner-span') and contains(normalize-space(text()),'CONTINUE')]]"
+    MFA_CONFIRM = "//button[.//span[normalize-space()='CONFIRM']]"
+    MFA_CONTINUE = "//button[.//span[normalize-space()='CONTINUE']]"
     # Web-parsed transaction table
     TRANSACTION_SECTION_HEADER = "tr.section-header-container"
     TRANSACTION_ROWS = "//table//tbody/tr[contains(@class, 'table-row')]"

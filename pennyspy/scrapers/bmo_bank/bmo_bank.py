@@ -94,20 +94,29 @@ class BMOBank(BankScraper):
     def _complete_2fa(self, otp_code: str) -> None:
         """Complete the 2FA UI flow. Does NOT capture cookies or quit the driver."""
         logger.info("Entering OTP code")
-        otp_field = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.OTP_INPUT))
-        )
+        try:
+            otp_field = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
+                EC.visibility_of_element_located((By.XPATH, ConnectionElementId.OTP_INPUT))
+            )
+        except TimeoutException as e:
+            raise TimeoutException("Couldn't find OTP input field") from e
         otp_field.send_keys(otp_code)
 
-        confirm_btn = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONFIRM))
-        )
+        try:
+            confirm_btn = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
+                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONFIRM))
+            )
+        except TimeoutException as e:
+            raise TimeoutException("OTP confirm button is not available/clickable") from e
         confirm_btn.click()
 
         logger.info("Waiting for CONTINUE button")
-        continue_btn = WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONTINUE))
-        )
+        try:
+            continue_btn = WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(
+                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONTINUE))
+            )
+        except TimeoutException as e:
+            raise TimeoutException("Continue button after OTP is not available/clickable") from e
         continue_btn.click()
 
         logger.info("Waiting for post-2FA redirect to %s", BMO_SUCCESS_URL)
