@@ -17,6 +17,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 DEFAULT_HEADLESS: bool = True
+_DOCKER_DATA_DIR = Path("/app/data")
+_DOCKER_SCREENSHOT_DIR = _DOCKER_DATA_DIR / "screenshots"
 
 
 @dataclass(frozen=True)
@@ -80,6 +82,45 @@ def _create_firefox(config: BrowserConfig, user_agent: str, user_data_dir: Path)
     return webdriver.Firefox(options=options)
 
 
+def _repo_checkout_screenshot_dir() -> Path | None:
+    repo_root = Path(__file__).resolve().parents[2]
+    if (repo_root / "pyproject.toml").is_file():
+        return repo_root / "pennyspy-data" / "screenshots"
+    return None
+
+
+def _home_screenshot_dir() -> Path:
+    return Path.home() / ".pennyspy" / "screenshots"
+
+
+def _resolve_screenshot_dir() -> Path:
+    env_dir = os.environ.get("PENNYSPY_SCREENSHOT_DIR")
+    if env_dir:
+        return Path(env_dir)
+    if _DOCKER_DATA_DIR.exists() and os.access(_DOCKER_DATA_DIR, os.W_OK):
+        return _DOCKER_SCREENSHOT_DIR
+    checkout_dir = _repo_checkout_screenshot_dir()
+    if checkout_dir is not None:
+        return checkout_dir
+    return _home_screenshot_dir()
+
+
+def _ensure_screenshot_dir(preferred: Path) -> Path:
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        return preferred
+    except PermissionError as exc:
+        fallback = _home_screenshot_dir() / preferred.name
+        logger.warning(
+            "cannot write screenshots to %s (%s); falling back to %s",
+            preferred,
+            exc,
+            fallback,
+        )
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback
+
+
 class Scraper:
     driver: WebDriver
 
@@ -96,9 +137,9 @@ class Scraper:
             shutil.rmtree(self._user_data_dir, ignore_errors=True)
 
     def _save_screenshot(self, filename: str):
-        filename += f"_{datetime.now().time().strftime('%H_%M_%S')}.png"
-        screenshot_dir = Path(__file__).parent / f"screenshots_{datetime.now().strftime('%Y_%m_%d')}"
-        screenshot_dir.mkdir(exist_ok=True, parents=True)
+        now = datetime.now()
+        filename += f"_{now.time().strftime('%H_%M_%S')}.png"
+        screenshot_dir = _ensure_screenshot_dir(_resolve_screenshot_dir() / now.strftime("%Y_%m_%d"))
         screenshot_file_path = screenshot_dir / filename
-        self.driver.save_screenshot(screenshot_file_path)
+        self.driver.save_screenshot(str(screenshot_file_path))
         logger.info("saved screenshot at %s", screenshot_file_path)
