@@ -620,21 +620,43 @@ input[type="date"] { color-scheme: dark; }
 }
 .logs-fab:hover { color: var(--text); border-color: var(--border-2); }
 
-.package-version {
+.package-version-panel {
   position: fixed;
   left: 16px;
   bottom: 14px;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  pointer-events: none;
+}
+
+.package-version,
+.package-update {
   font-family: var(--font-mono);
   font-size: 10px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--text-muted);
   padding: 6px 10px;
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
   background: var(--surface);
-  z-index: 50;
-  pointer-events: none;
+}
+
+.package-version {
+  color: var(--text-muted);
+}
+
+.package-update {
+  color: var(--amber);
+  border-color: rgba(255, 140, 0, 0.35);
+  background: rgba(255, 140, 0, 0.08);
+  box-shadow: 0 0 18px rgba(255, 140, 0, 0.08);
+}
+
+.package-update[hidden] {
+  display: none !important;
 }
 
 /* ─── LOGS VIEWER ───────────────────────────────────────────────── */
