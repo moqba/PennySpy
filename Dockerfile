@@ -2,30 +2,30 @@
 
 ARG PYTHON_VERSION=3.11-slim-bookworm
 ARG CHROME_VERSION=138.0.7204.94
+ARG UV_VERSION=0.11.19
+
+FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
 
 FROM python:${PYTHON_VERSION} AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PIP_NO_CACHE_DIR=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    UV_PROJECT_ENVIRONMENT=/opt/venv
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python -m venv /opt/venv
+COPY --from=uv /uv /usr/local/bin/uv
 ENV PATH="/opt/venv/bin:${PATH}"
 
 WORKDIR /build
 
-COPY pyproject.toml README.md ./
-RUN mkdir -p pennyspy && echo "" > pennyspy/__init__.py \
-    && pip install --no-cache-dir . \
-    && rm -rf pennyspy
+COPY pyproject.toml uv.lock README.md ./
+RUN uv sync --locked --no-install-project
 
 COPY pennyspy ./pennyspy
-RUN pip install --no-cache-dir --no-deps .
+RUN uv sync --locked --no-editable
 
 
 FROM python:${PYTHON_VERSION} AS runtime
