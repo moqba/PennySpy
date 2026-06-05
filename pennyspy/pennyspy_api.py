@@ -1,6 +1,8 @@
 import os
 import pathlib
+import tomllib
 from datetime import date, datetime
+from importlib.metadata import PackageNotFoundError, version
 from logging import getLogger
 from typing import Final
 
@@ -73,6 +75,22 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 session_manager = ScraperSessionManager(ttl_seconds=600)
+
+
+def _get_package_version() -> str:
+    pyproject_path = pathlib.Path(__file__).parent.parent / "pyproject.toml"
+    if pyproject_path.exists():
+        try:
+            with pyproject_path.open("rb") as pyproject_file:
+                pyproject = tomllib.load(pyproject_file)
+            return str(pyproject["project"]["version"])
+        except (OSError, KeyError, tomllib.TOMLDecodeError):
+            logger.exception("Failed to read package version from %s", pyproject_path)
+
+    try:
+        return version("pennyspy")
+    except PackageNotFoundError:
+        return "unknown"
 
 app.include_router(
     create_scraper_router(
@@ -176,6 +194,11 @@ def delete_logs() -> dict:
 @app.get("/health", tags=["Health"])
 def health_check():
     return {"status": "ok"}
+
+
+@app.get("/version", tags=["Version"])
+def package_version() -> dict[str, str]:
+    return {"name": "pennyspy", "version": _get_package_version()}
 
 
 @app.get("/", include_in_schema=False)

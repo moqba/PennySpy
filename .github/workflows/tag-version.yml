@@ -3,7 +3,7 @@ name: Tag version
 on:
   push:
     branches:
-      - master
+      - main
 
 permissions:
   contents: write
