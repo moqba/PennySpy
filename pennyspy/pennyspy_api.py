@@ -26,6 +26,7 @@ from pennyspy.scrapers.router import create_scraper_router
 from pennyspy.scrapers.scotiabank.scotiabank import ScotiaBank
 from pennyspy.scrapers.session import ScraperSessionManager
 from pennyspy.scrapers.wealthsimple.wealthsimple import Wealthsimple
+from pennyspy.version_check import get_latest_tag_version, is_newer_version
 
 LOG_FILE = setup_logging()
 LOG_DIR = LOG_FILE.parent
@@ -91,6 +92,7 @@ def _get_package_version() -> str:
         return version("pennyspy")
     except PackageNotFoundError:
         return "unknown"
+
 
 app.include_router(
     create_scraper_router(
@@ -197,8 +199,15 @@ def health_check():
 
 
 @app.get("/version", tags=["Version"])
-def package_version() -> dict[str, str]:
-    return {"name": "pennyspy", "version": _get_package_version()}
+def package_version() -> dict[str, str | bool | None]:
+    current_version = _get_package_version()
+    latest_version = get_latest_tag_version()
+    return {
+        "name": "pennyspy",
+        "version": current_version,
+        "latest_version": latest_version,
+        "update_available": is_newer_version(latest_version, current_version),
+    }
 
 
 @app.get("/", include_in_schema=False)
