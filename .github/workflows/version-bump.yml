@@ -1,0 +1,33 @@
+name: Version bump
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  version-bump:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Fetch base branch
+        run: git fetch origin main
+
+      - name: Check pyproject version bump
+        run: uv run python scripts/check_version_bump.py --base-ref origin/main

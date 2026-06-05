@@ -594,7 +594,7 @@ wheels = [
 
 [[package]]
 name = "pennyspy"
-version = "0.4.3"
+version = "0.5.8"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -612,6 +612,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "packaging" },
     { name = "pandas-stubs" },
     { name = "pytest" },
     { name = "ruff" },
@@ -626,6 +627,7 @@ requires-dist = [
     { name = "fastapi" },
     { name = "mypy", marker = "extra == 'dev'" },
     { name = "ofxtools" },
+    { name = "packaging", marker = "extra == 'dev'" },
     { name = "pandas" },
     { name = "pandas-stubs", marker = "extra == 'dev'" },
     { name = "pydantic" },

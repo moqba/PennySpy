@@ -29,7 +29,7 @@ for required env variables, view the [setup](#Setup) for the bank of choice.
 ### Launch container using docker command
 It is possible, alternatively, to use docker using this command.
 ```shell
-docker run --restart=unless-stopped -d -p 5056:5056 -v YOUR/PATH/TO/DATA:/pennyspy --name pennyspy moqba/pennyspy:latest
+docker run --restart=unless-stopped -d -p 5056:5056 -v YOUR/PATH/TO/DATA:/app/data --name pennyspy moqba/pennyspy:latest
 ```
 
 ## Python package
@@ -48,6 +48,8 @@ The main API service supports all banks.
 It runs on the port 5056 by default, user can modify the port by setting `PENNYSPY_PORT` env variable.
 The Docker image starts the API service automatically.
 See the bank’s setup page for API call details.
+
+Screenshots captured during scraper errors are written to the data directory by default. With the included Docker Compose file, they appear under `./pennyspy-data/screenshots`. Override `PENNYSPY_SCREENSHOT_DIR` if you want a different location.
 
 
 # Setup

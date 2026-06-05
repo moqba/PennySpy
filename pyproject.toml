@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pennyspy"
-version = "0.5.8"
+version = "0.5.9"
 description = "Scrape transaction history from banks"
 readme = "README.md"
 license = "MIT"
@@ -28,11 +28,12 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "mypy",
+    "packaging",
+    "pandas-stubs",
     "pytest",
     "ruff",
     "types-beautifulsoup4",
     "types-requests",
-    "pandas-stubs",
 ]
 
 [project.scripts]
