@@ -3,36 +3,49 @@ import sys
 from pathlib import Path
 
 
-def run(cmd):
-    print(f"> {' '.join(cmd)}")
-    result = subprocess.run(cmd)
-    if result.returncode != 0:
-        sys.exit(result.returncode)
+class CommandRunner:
+    def run(self, cmd):
+        print(f"> {' '.join(cmd)}")
+        result = subprocess.run(cmd)
+        if result.returncode != 0:
+            sys.exit(result.returncode)
 
 
-def get_git_hash():
-    result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
-    return result.stdout.strip()
+class DockerImagePublisher(CommandRunner):
+    image = "moqba/pennyspy"
 
+    def __init__(self):
+        self.root_dir = Path(__file__).parent.parent
+        self.git_hash = self.get_git_hash()
+        self.git_tag = self.get_git_tag()
+        self.version = self.git_tag or self.git_hash
+        self.version_tag = f"{self.image}:{self.version}"
+        self.latest_tag = f"{self.image}:latest"
 
-def docker_build():
-    git_hash = get_git_hash()
-    tag_hash = f"moqba/pennyspy:{git_hash}"
-    tag_latest = "moqba/pennyspy:latest"
-    root_dir = Path(__file__).parent.parent
+    def get_git_hash(self):
+        result = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=True)
+        return result.stdout.strip()
 
-    run(["docker", "build", "-t", tag_hash, str(root_dir)])
-    run(["docker", "tag", tag_hash, tag_latest])
+    def get_git_tag(self):
+        result = subprocess.run(
+            ["git", "describe", "--tags", "--exact-match", "HEAD"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            return None
 
+        return result.stdout.strip() or None
 
-def docker_push():
-    git_hash = get_git_hash()
-    tag_hash = f"moqba/pennyspy:{git_hash}"
-    tag_latest = "moqba/pennyspy:latest"
+    def docker_build(self):
+        self.run(["docker", "build", "-t", self.version_tag, str(self.root_dir)])
+        self.run(["docker", "tag", self.version_tag, self.latest_tag])
 
-    print(f"Pushing {tag_hash} and latest...")
-    run(["docker", "push", tag_hash])
-    run(["docker", "push", tag_latest])
+    def docker_push(self):
+        print(f"Pushing {self.version_tag} and latest...")
+        self.run(["docker", "push", self.version_tag])
+        self.run(["docker", "push", self.latest_tag])
 
 
 if __name__ == "__main__":
@@ -42,10 +55,12 @@ if __name__ == "__main__":
     parser.add_argument("action", choices=["build", "push", "all"])
     args = parser.parse_args()
 
+    publisher = DockerImagePublisher()
+
     if args.action == "build":
-        docker_build()
+        publisher.docker_build()
     elif args.action == "push":
-        docker_push()
+        publisher.docker_push()
     elif args.action == "all":
-        docker_build()
-        docker_push()
+        publisher.docker_build()
+        publisher.docker_push()
