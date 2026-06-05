@@ -620,6 +620,23 @@ input[type="date"] { color-scheme: dark; }
 }
 .logs-fab:hover { color: var(--text); border-color: var(--border-2); }
 
+.package-version {
+  position: fixed;
+  left: 16px;
+  bottom: 14px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  z-index: 50;
+  pointer-events: none;
+}
+
 /* ─── LOGS VIEWER ───────────────────────────────────────────────── */
 .logs-toolbar {
   display: flex;
