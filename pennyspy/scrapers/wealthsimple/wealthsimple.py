@@ -162,7 +162,7 @@ class Wealthsimple(BankScraper):
 
     def start_auth(self, **kwargs: Any) -> AuthStep:
         logger.info("Sending Login request")
-        self.driver.get(WEALTHSIMPLE_LOGIN)
+        self._navigate("open Wealthsimple login page", WEALTHSIMPLE_LOGIN)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         username = get_required_env_var("PENNYSPY_WSU")
         password = get_required_env_var("PENNYSPY_WSP")
@@ -195,12 +195,13 @@ class Wealthsimple(BankScraper):
     # ── Internal implementation ────────────────────────────────────────
 
     def _send_2fa_text(self, otp_code: str):
-        otp_field = self.driver.find_element(By.XPATH, ConnectionElementXpath.PHONE_2FA)
+        otp_field = self._find_element("enter Wealthsimple OTP code", By.XPATH, ConnectionElementXpath.PHONE_2FA)
         if not otp_field:
             raise ValueError("No OTP detected")
-        otp_field.send_keys(otp_code)
+        self._send_keys("enter Wealthsimple OTP code", otp_field, otp_code, sensitive=True)
         time.sleep(1)
-        self.driver.find_element(By.XPATH, ConnectionElementXpath.SUBMIT).click()
+        submit_btn = self._find_element("submit Wealthsimple OTP code", By.XPATH, ConnectionElementXpath.SUBMIT)
+        self._click("submit Wealthsimple OTP code", submit_btn)
         try:
             WebDriverWait(self.driver, DelaySeconds.LOGIN_ATTEMPT).until(
                 EC.presence_of_element_located((By.XPATH, ConnectionElementXpath.FAILED_2FA))
@@ -217,10 +218,13 @@ class Wealthsimple(BankScraper):
         return self._expand_and_get_all_activity(since_date=since_date)
 
     def open_activity(self):
-        self.driver.get(WEALTHSIMPLE_ACTIVITY)
+        self._navigate("open Wealthsimple activity page", WEALTHSIMPLE_ACTIVITY)
         try:
-            WebDriverWait(self.driver, 20).until(
-                EC.visibility_of_element_located((By.XPATH, ActivityElementXpath.LOAD_MORE))
+            self._wait_until(
+                "find visible Wealthsimple Load more button on activity page",
+                EC.visibility_of_element_located((By.XPATH, ActivityElementXpath.LOAD_MORE)),
+                20,
+                screenshot_name="wealthsimple_activity_load_more_timeout",
             )
         except TimeoutException as e:
             raise TimeoutException("Couldn't find the button 'Load more'") from e
@@ -243,9 +247,12 @@ class Wealthsimple(BankScraper):
             if not load_more:
                 break
             prev_count = len(self.driver.find_elements(By.XPATH, ActivityXpath.TRANSACTION_EXPENSION))
-            load_more[0].click()
-            WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-                lambda d: len(d.find_elements(By.XPATH, ActivityXpath.TRANSACTION_EXPENSION)) > prev_count
+            self._click("click Wealthsimple Load more button", load_more[0])
+            self._wait_until(
+                "load more Wealthsimple activity rows",
+                lambda d: len(d.find_elements(By.XPATH, ActivityXpath.TRANSACTION_EXPENSION)) > prev_count,
+                DelaySeconds.PAGE_LOADING,
+                screenshot_name="wealthsimple_load_more_timeout",
             )
 
     def _build_date_index(self) -> dict[str, datetime]:
@@ -269,8 +276,11 @@ class Wealthsimple(BankScraper):
     def _expand_and_get_all_activity(self, since_date: datetime | None = None) -> DataFrame:
         # Wait for at least one header button to confirm the activity list is loaded
         try:
-            WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-                EC.presence_of_element_located((By.XPATH, ActivityXpath.TRANSACTION_EXPENSION))
+            self._wait_until(
+                "load at least one Wealthsimple activity header button",
+                EC.presence_of_element_located((By.XPATH, ActivityXpath.TRANSACTION_EXPENSION)),
+                DelaySeconds.PAGE_LOADING,
+                screenshot_name="wealthsimple_activity_headers_timeout",
             )
         except TimeoutException as e:
             raise TimeoutException("Couldn't expand activities to fetch.") from e
@@ -301,18 +311,20 @@ class Wealthsimple(BankScraper):
 
                 if button.get_attribute("aria-expanded") != "true":
                     self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
-                    button.click()
+                    self._click(f"expand Wealthsimple activity region {region_id}", button)
                     # Wait for region content to render, not just element presence —
                     # "In progress" transactions have a lazily-populated region.
-                    WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
+                    self._wait_until(
+                        f"render Wealthsimple activity details for region {region_id}",
                         EC.presence_of_element_located(
                             (
                                 By.XPATH,
                                 f'//*[@id="{region_id}"]//*[(self::p or self::span) and @data-fs-privacy-rule="unmask"]',
                             )
-                        )
+                        ),
+                        DelaySeconds.PAGE_LOADING,
                     )
-                activity_div = self.driver.find_element(By.ID, region_id)
+                activity_div = self._find_element(f"read Wealthsimple activity region {region_id}", By.ID, region_id)
                 activity = build_activity_row(
                     button.get_attribute("innerHTML") or "",
                     activity_div.get_attribute("innerHTML") or "",
@@ -344,9 +356,12 @@ class Wealthsimple(BankScraper):
 
     def _login(self, username: SecretString, password: SecretString):
         logger.info("logging in...")
-        self.driver.find_element(By.XPATH, ConnectionElementXpath.USERNAME).send_keys(username.reveal())
-        self.driver.find_element(By.XPATH, ConnectionElementXpath.PASSWORD).send_keys(password.reveal())
-        self.driver.find_element(By.XPATH, ConnectionElementXpath.SUBMIT).click()
+        username_field = self._find_element("enter Wealthsimple username", By.XPATH, ConnectionElementXpath.USERNAME)
+        self._send_keys("enter Wealthsimple username", username_field, username.reveal(), sensitive=True)
+        password_field = self._find_element("enter Wealthsimple password", By.XPATH, ConnectionElementXpath.PASSWORD)
+        self._send_keys("enter Wealthsimple password", password_field, password.reveal(), sensitive=True)
+        submit_btn = self._find_element("click Wealthsimple login submit button", By.XPATH, ConnectionElementXpath.SUBMIT)
+        self._click("click Wealthsimple login submit button", submit_btn)
 
     def _check_for_wrong_login(self):
         try:

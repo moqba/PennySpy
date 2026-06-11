@@ -15,9 +15,9 @@ class DAndBBotDetector(Scraper, BotDetectionChecker):
     TEST_LOADING_DELAY_SEC = 3
 
     def get_test_result(self) -> dict:
-        self.driver.get(self.URL)
+        self._navigate("open Device and Browser Info bot-detection page", self.URL)
         time.sleep(self.TEST_LOADING_DELAY_SEC)
-        result_text = self.driver.find_element(By.ID, "jsonResult")
+        result_text = self._find_element("read Device and Browser Info bot-detection JSON result", By.ID, "jsonResult")
         raw_result_text = result_text.get_attribute("textContent")
         assert raw_result_text is not None, "Could not read test result text"
         return json.loads(raw_result_text)  # type: ignore[no-any-return]
