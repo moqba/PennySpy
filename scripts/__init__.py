@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+lock_updated = False
+
 
 def run(cmd):
     print(f"> {' '.join(cmd)}")
@@ -14,7 +16,18 @@ def get_git_hash():
     return result.stdout.strip()
 
 
+def uv_lock():
+    global lock_updated
+
+    if lock_updated:
+        return
+
+    run(["uv", "lock"])
+    lock_updated = True
+
+
 def docker_build():
+    uv_lock()
     git_hash = get_git_hash()
     tag_hash = f"moqba/pennyspy:{git_hash}"
     tag_latest = "moqba/pennyspy:latest"
@@ -24,6 +37,7 @@ def docker_build():
 
 
 def docker_push():
+    uv_lock()
     git_hash = get_git_hash()
     tag_hash = f"moqba/pennyspy:{git_hash}"
     tag_latest = "moqba/pennyspy:latest"

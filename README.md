@@ -51,6 +51,8 @@ See the bank’s setup page for API call details.
 
 Screenshots captured during scraper errors are written to the data directory by default. With the included Docker Compose file, they appear under `./pennyspy-data/screenshots`. Override `PENNYSPY_SCREENSHOT_DIR` if you want a different location.
 
+Set `PENNYSPY_FAILURE_HTML_DIR` to also save the current browser page HTML when a scraper failure screenshot is captured. With Docker Compose, use `/app/data/failure-html` to make those files appear under `./pennyspy-data/failure-html`. Captured HTML may contain sensitive bank page content, so this is disabled unless the environment variable is set.
+
 
 # Setup
 For RBC bank setup and API details, consult the [RBC setup guide](pennyspy/scrapers/rbc_bank/setup.md).
