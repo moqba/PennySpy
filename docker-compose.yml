@@ -4,6 +4,9 @@ services:
     environment:
       # Uncomment any of the lines below to set configuration options
       # - PENNYSPY_PORT=5056
+      # Save current page HTML next to scraper failure diagnostics when set.
+      # Captured pages may include sensitive bank page content.
+      # - PENNYSPY_FAILURE_HTML_DIR=/app/data/failure-html
       # user can set these in the .env file
       # - PENNYSPY_RBCU=user
       # - PENNYSPY_RBCP=hunter123

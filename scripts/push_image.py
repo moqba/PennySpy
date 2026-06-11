@@ -16,6 +16,7 @@ class DockerImagePublisher(CommandRunner):
 
     def __init__(self):
         self.root_dir = Path(__file__).parent.parent
+        self.lock_updated = False
         self.git_hash = self.get_git_hash()
         self.git_tag = self.get_git_tag()
         self.version = self.git_tag or self.git_hash
@@ -38,11 +39,20 @@ class DockerImagePublisher(CommandRunner):
 
         return result.stdout.strip() or None
 
+    def uv_lock(self):
+        if self.lock_updated:
+            return
+
+        self.run(["uv", "lock"])
+        self.lock_updated = True
+
     def docker_build(self):
+        self.uv_lock()
         self.run(["docker", "build", "-t", self.version_tag, str(self.root_dir)])
         self.run(["docker", "tag", self.version_tag, self.latest_tag])
 
     def docker_push(self):
+        self.uv_lock()
         print(f"Pushing {self.version_tag} and latest...")
         self.run(["docker", "push", self.version_tag])
         self.run(["docker", "push", self.latest_tag])

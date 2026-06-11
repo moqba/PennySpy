@@ -25,6 +25,7 @@ Locator = tuple[str, str]
 DEFAULT_HEADLESS: bool = True
 _DOCKER_DATA_DIR = Path("/app/data")
 _DOCKER_SCREENSHOT_DIR = _DOCKER_DATA_DIR / "screenshots"
+_FAILURE_HTML_DIR_ENV = "PENNYSPY_FAILURE_HTML_DIR"
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,10 @@ def _home_screenshot_dir() -> Path:
     return Path.home() / ".pennyspy" / "screenshots"
 
 
+def _home_failure_html_dir() -> Path:
+    return Path.home() / ".pennyspy" / "failure-html"
+
+
 def _resolve_screenshot_dir() -> Path:
     env_dir = os.environ.get("PENNYSPY_SCREENSHOT_DIR")
     if env_dir:
@@ -111,20 +116,36 @@ def _resolve_screenshot_dir() -> Path:
     return _home_screenshot_dir()
 
 
-def _ensure_screenshot_dir(preferred: Path) -> Path:
+def _resolve_failure_html_dir() -> Path | None:
+    env_dir = os.environ.get(_FAILURE_HTML_DIR_ENV)
+    if not env_dir:
+        return None
+    return Path(env_dir)
+
+
+def _ensure_artifact_dir(preferred: Path, fallback_root: Path, label: str) -> Path:
     try:
         preferred.mkdir(parents=True, exist_ok=True)
         return preferred
     except PermissionError as exc:
-        fallback = _home_screenshot_dir() / preferred.name
+        fallback = fallback_root / preferred.name
         logger.warning(
-            "cannot write screenshots to %s (%s); falling back to %s",
+            "cannot write %s to %s (%s); falling back to %s",
+            label,
             preferred,
             exc,
             fallback,
         )
         fallback.mkdir(parents=True, exist_ok=True)
         return fallback
+
+
+def _ensure_screenshot_dir(preferred: Path) -> Path:
+    return _ensure_artifact_dir(preferred, _home_screenshot_dir(), "screenshots")
+
+
+def _ensure_failure_html_dir(preferred: Path) -> Path:
+    return _ensure_artifact_dir(preferred, _home_failure_html_dir(), "failure HTML")
 
 
 class Scraper:
@@ -205,8 +226,27 @@ class Scraper:
 
     def _save_screenshot(self, filename: str):
         now = datetime.now()
-        filename += f"_{now.time().strftime('%H_%M_%S')}.png"
+        filename += f"_{now.time().strftime('%H_%M_%S')}"
         screenshot_dir = _ensure_screenshot_dir(_resolve_screenshot_dir() / now.strftime("%Y_%m_%d"))
-        screenshot_file_path = screenshot_dir / filename
+        screenshot_file_path = screenshot_dir / f"{filename}.png"
         self.driver.save_screenshot(str(screenshot_file_path))
         logger.info("saved screenshot at %s", screenshot_file_path)
+        self._save_failure_html_if_enabled(filename, now)
+
+    def _save_failure_html_if_enabled(self, filename: str, timestamp: datetime) -> None:
+        html_dir = _resolve_failure_html_dir()
+        if html_dir is None:
+            return
+
+        try:
+            failure_html_dir = _ensure_failure_html_dir(html_dir / timestamp.strftime("%Y_%m_%d"))
+            html_file_path = failure_html_dir / f"{filename}.html"
+            html_file_path.write_text(self.driver.page_source, encoding="utf-8")
+        except WebDriverException as e:
+            logger.warning("could not read failure page HTML for %s: %s", filename, e)
+            return
+        except OSError as e:
+            logger.warning("could not save failure page HTML for %s: %s", filename, e)
+            return
+
+        logger.info("saved failure page HTML at %s", html_file_path)
