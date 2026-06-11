@@ -57,21 +57,27 @@ class ScotiaBank(BankScraper):
 
     def _do_start_auth(self) -> AuthStep:
         logger.info("Navigating to Scotiabank home page: %s", SCOTIA_HOME_URL)
-        self.driver.get(SCOTIA_HOME_URL)
+        self._navigate("open Scotiabank home page", SCOTIA_HOME_URL)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         logger.info("Home page loaded — current URL: %s", self.driver.current_url)
 
         self._dismiss_cookie_banner()
 
         logger.info("Clicking Sign In button")
-        sign_in_link = WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-            EC.element_to_be_clickable((By.XPATH, SCOTIA_SIGN_IN_LINK))
+        sign_in_link = self._wait_until(
+            "find clickable Scotiabank home-page Sign In button",
+            EC.element_to_be_clickable((By.XPATH, SCOTIA_SIGN_IN_LINK)),
+            DelaySeconds.PAGE_LOADING,
+            screenshot_name="scotia_sign_in_button_timeout",
         )
-        sign_in_link.click()
+        self._click("click Scotiabank home-page Sign In button", sign_in_link)
 
         logger.info("Waiting for login form to load")
-        WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-            EC.presence_of_element_located((By.XPATH, ConnectionElementId.USERNAME))
+        self._wait_until(
+            "load Scotiabank login form username field",
+            EC.presence_of_element_located((By.XPATH, ConnectionElementId.USERNAME)),
+            DelaySeconds.PAGE_LOADING,
+            screenshot_name="scotia_login_form_timeout",
         )
         logger.info("Login page loaded — current URL: %s", self.driver.current_url)
         logger.info("Page title: %s", self.driver.title)
@@ -145,17 +151,17 @@ class ScotiaBank(BankScraper):
 
     def _login(self, username: SecretString, password: SecretString) -> None:
         logger.info("Looking for username field")
-        username_field = self.driver.find_element(By.XPATH, ConnectionElementId.USERNAME)
+        username_field = self._find_element("enter Scotiabank username", By.XPATH, ConnectionElementId.USERNAME)
         logger.info("Username field found — filling credentials")
-        username_field.send_keys(username.reveal())
+        self._send_keys("enter Scotiabank username", username_field, username.reveal(), sensitive=True)
 
-        password_field = self.driver.find_element(By.XPATH, ConnectionElementId.PASSWORD)
+        password_field = self._find_element("enter Scotiabank password", By.XPATH, ConnectionElementId.PASSWORD)
         logger.info("Password field found — filling password")
-        password_field.send_keys(password.reveal())
+        self._send_keys("enter Scotiabank password", password_field, password.reveal(), sensitive=True)
 
-        sign_in_btn = self.driver.find_element(By.XPATH, ConnectionElementId.SIGN_IN)
+        sign_in_btn = self._find_element("click Scotiabank login submit button", By.XPATH, ConnectionElementId.SIGN_IN)
         logger.info("Sign-in button found — clicking")
-        sign_in_btn.click()
+        self._click("click Scotiabank login submit button", sign_in_btn)
         logger.info("Sign-in button clicked")
 
     def _check_for_wrong_login(self) -> None:
@@ -179,11 +185,13 @@ class ScotiaBank(BankScraper):
         """
         logger.info("Waiting for 2SV or direct success (timeout: %ds)...", DelaySeconds.LOGIN_SUCCESS_TIMEOUT)
         try:
-            WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(
+            self._wait_until(
+                "reach Scotiabank success domain or 2SV confirmation page after login",
                 lambda d: SCOTIA_SUCCESS_DOMAIN in d.current_url or "2sv-confirmation" in d.current_url,
+                DelaySeconds.LOGIN_SUCCESS_TIMEOUT,
+                screenshot_name="scotia_login_timeout",
             )
         except TimeoutException as e:
-            self._save_screenshot("scotia_login_timeout")
             raise TimeoutException("Scotiabank login timed out after credentials") from e
 
         current = self.driver.current_url
@@ -197,35 +205,47 @@ class ScotiaBank(BankScraper):
 
     def _handle_trust_device(self) -> None:
         try:
-            checkbox = WebDriverWait(self.driver, DelaySeconds.COOKIE_INIT).until(
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CHECKBOX))
+            checkbox = self._wait_until(
+                "find clickable Scotiabank trust-device checkbox",
+                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CHECKBOX)),
+                DelaySeconds.COOKIE_INIT,
+                timeout_log_level=logging.INFO,
             )
             logger.info("Checking 'trust this device' checkbox")
-            checkbox.click()
+            self._click("check Scotiabank trust-device checkbox", checkbox)
         except TimeoutException:
             logger.info("No trust device checkbox found — skipping")
 
         logger.info("Clicking continue button")
-        continue_btn = WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CONTINUE))
+        continue_btn = self._wait_until(
+            "find clickable Scotiabank trust-device continue button",
+            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CONTINUE)),
+            DelaySeconds.PAGE_LOADING,
+            screenshot_name="scotia_trust_device_continue_timeout",
         )
-        continue_btn.click()
+        self._click("click Scotiabank trust-device continue button", continue_btn)
 
         logger.info(
             "Waiting for redirect to %s (timeout: %ds)", SCOTIA_SUCCESS_DOMAIN, DelaySeconds.LOGIN_SUCCESS_TIMEOUT
         )
-        WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(
+        self._wait_until(
+            f"redirect to Scotiabank authenticated domain {SCOTIA_SUCCESS_DOMAIN}",
             EC.url_contains(SCOTIA_SUCCESS_DOMAIN),
+            DelaySeconds.LOGIN_SUCCESS_TIMEOUT,
+            screenshot_name="scotia_success_redirect_timeout",
         )
         logger.info("Connected to Scotiabank — final URL: %s", self.driver.current_url)
 
     def _dismiss_cookie_banner(self) -> None:
         logger.info("Checking for cookie consent banner")
         try:
-            accept_btn = WebDriverWait(self.driver, DelaySeconds.COOKIE_INIT).until(
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.COOKIE_ACCEPT))
+            accept_btn = self._wait_until(
+                "find clickable Scotiabank cookie consent button",
+                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.COOKIE_ACCEPT)),
+                DelaySeconds.COOKIE_INIT,
+                timeout_log_level=logging.INFO,
             )
-            accept_btn.click()
+            self._click("dismiss Scotiabank cookie consent banner", accept_btn)
             logger.info("Cookie consent banner dismissed")
         except TimeoutException:
             logger.info("No cookie consent banner found — continuing")
@@ -360,7 +380,7 @@ class ScotiaBank(BankScraper):
 
     def _capture_cookies(self) -> None:
         logger.info("Navigating to %s to prime session cookies", SCOTIA_SUMMARY_URL)
-        self.driver.get(SCOTIA_SUMMARY_URL)
+        self._navigate("open Scotiabank account summary to prime session cookies", SCOTIA_SUMMARY_URL)
         sleep(DelaySeconds.COOKIE_INIT)
         self.cookies = self.driver.get_cookies()
         logger.info("Session cookies captured (%d cookies)", len(self.cookies))

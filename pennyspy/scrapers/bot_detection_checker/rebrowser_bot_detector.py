@@ -14,9 +14,9 @@ class RebrowserBotDetector(Scraper, BotDetectionChecker):
     URL = r"https://bot-detector.rebrowser.net/"
 
     def get_test_result(self) -> list[dict[str, object]]:
-        self.driver.get(self.URL)
+        self._navigate("open Rebrowser bot-detection page", self.URL)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
-        result_text_area = self.driver.find_element(By.ID, "detections-json")
+        result_text_area = self._find_element("read Rebrowser bot-detection JSON result", By.ID, "detections-json")
         raw_value = result_text_area.get_attribute("value")
         assert raw_value is not None, "Could not read detections JSON"
         result: list[dict[str, object]] = json.loads(raw_value)

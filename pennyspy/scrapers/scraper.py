@@ -4,17 +4,23 @@ import logging
 import os
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal, TypeVar
 
 from browserforge.headers import HeaderGenerator
 from selenium import webdriver
+from selenium.common.exceptions import TimeoutException, WebDriverException
 from selenium.webdriver.remote.webdriver import WebDriver
+from selenium.webdriver.remote.webelement import WebElement
+from selenium.webdriver.support.ui import WebDriverWait
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
+_WaitResult = TypeVar("_WaitResult")
+Locator = tuple[str, str]
 
 DEFAULT_HEADLESS: bool = True
 _DOCKER_DATA_DIR = Path("/app/data")
@@ -135,6 +141,67 @@ class Scraper:
                 self.driver = None  # type: ignore[assignment]
         finally:
             shutil.rmtree(self._user_data_dir, ignore_errors=True)
+
+    def _navigate(self, description: str, url: str) -> None:
+        logger.info("Starting action: %s; navigating to %s", description, url)
+        try:
+            self.driver.get(url)
+        except WebDriverException as e:
+            raise WebDriverException(f"Failed while {description}; target URL: {url}") from e
+        logger.info("Completed action: %s; current URL: %s", description, self.driver.current_url)
+
+    def _wait_until(
+        self,
+        description: str,
+        condition: Callable[[WebDriver], _WaitResult],
+        timeout: int,
+        *,
+        screenshot_name: str | None = None,
+        timeout_log_level: int = logging.ERROR,
+    ) -> _WaitResult:
+        logger.info("Waiting to %s (timeout: %ss)", description, timeout)
+        try:
+            result = WebDriverWait(self.driver, timeout).until(condition)
+        except TimeoutException as e:
+            if screenshot_name:
+                self._save_screenshot(screenshot_name)
+            logger.log(timeout_log_level, "Timed out while %s after %ss", description, timeout)
+            raise TimeoutException(f"Timed out while {description} after {timeout}s") from e
+        logger.info("Finished waiting to %s", description)
+        return result
+
+    def _find_element(self, description: str, by: str, locator: str) -> WebElement:
+        logger.info("Finding element to %s (%s=%s)", description, by, locator)
+        try:
+            element = self.driver.find_element(by, locator)
+        except WebDriverException as e:
+            raise WebDriverException(f"Failed while finding element to {description} ({by}={locator})") from e
+        logger.info("Found element to %s", description)
+        return element
+
+    def _click(self, description: str, element: WebElement) -> None:
+        logger.info("Starting action: %s", description)
+        try:
+            element.click()
+        except WebDriverException as e:
+            raise WebDriverException(f"Failed while {description}") from e
+        logger.info("Completed action: %s", description)
+
+    def _submit(self, description: str, element: WebElement) -> None:
+        logger.info("Starting action: %s", description)
+        try:
+            element.submit()
+        except WebDriverException as e:
+            raise WebDriverException(f"Failed while {description}") from e
+        logger.info("Completed action: %s", description)
+
+    def _send_keys(self, description: str, element: WebElement, value: Any, *, sensitive: bool = False) -> None:
+        logger.info("Starting action: %s%s", description, " (sensitive value redacted)" if sensitive else "")
+        try:
+            element.send_keys(value)
+        except WebDriverException as e:
+            raise WebDriverException(f"Failed while {description}") from e
+        logger.info("Completed action: %s", description)
 
     def _save_screenshot(self, filename: str):
         now = datetime.now()

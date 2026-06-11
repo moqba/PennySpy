@@ -46,7 +46,7 @@ class BMOBank(BankScraper):
         account_uuid: str = kwargs["account_uuid"]
         self._account_uuid = account_uuid
         logger.info("Navigating to BMO login page")
-        self.driver.get(BMO_LOGIN_URL)
+        self._navigate("open BMO login page", BMO_LOGIN_URL)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
 
         username = get_required_env_var("PENNYSPY_BMOU")
@@ -95,32 +95,43 @@ class BMOBank(BankScraper):
         """Complete the 2FA UI flow. Does NOT capture cookies or quit the driver."""
         logger.info("Entering OTP code")
         try:
-            otp_field = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
-                EC.visibility_of_element_located((By.XPATH, ConnectionElementId.OTP_INPUT))
+            otp_field = self._wait_until(
+                "find visible BMO OTP input field",
+                EC.visibility_of_element_located((By.XPATH, ConnectionElementId.OTP_INPUT)),
+                DelaySeconds.MFA_STEP_TIMEOUT,
             )
         except TimeoutException as e:
-            raise TimeoutException("Couldn't find OTP input field") from e
-        otp_field.send_keys(otp_code)
+            raise TimeoutException("Couldn't find OTP input field while completing BMO 2FA") from e
+        self._send_keys("enter BMO OTP code", otp_field, otp_code, sensitive=True)
 
         try:
-            confirm_btn = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONFIRM))
+            confirm_btn = self._wait_until(
+                "find clickable BMO OTP confirm button",
+                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONFIRM)),
+                DelaySeconds.MFA_STEP_TIMEOUT,
             )
         except TimeoutException as e:
-            raise TimeoutException("OTP confirm button is not available/clickable") from e
-        confirm_btn.click()
+            raise TimeoutException("OTP confirm button is not available/clickable while completing BMO 2FA") from e
+        self._click("click BMO OTP confirm button", confirm_btn)
 
         logger.info("Waiting for CONTINUE button")
         try:
-            continue_btn = WebDriverWait(self.driver, DelaySeconds.TWO_FACTOR_TIMEOUT).until(
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONTINUE))
+            continue_btn = self._wait_until(
+                "find clickable BMO continue button after OTP",
+                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONTINUE)),
+                DelaySeconds.TWO_FACTOR_TIMEOUT,
             )
         except TimeoutException as e:
-            raise TimeoutException("Continue button after OTP is not available/clickable") from e
-        continue_btn.click()
+            raise TimeoutException("Continue button after OTP is not available/clickable while completing BMO 2FA") from e
+        self._click("click BMO continue button after OTP", continue_btn)
 
         logger.info("Waiting for post-2FA redirect to %s", BMO_SUCCESS_URL)
-        WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(EC.url_to_be(BMO_SUCCESS_URL))
+        self._wait_until(
+            f"complete BMO post-2FA redirect to {BMO_SUCCESS_URL}",
+            EC.url_to_be(BMO_SUCCESS_URL),
+            DelaySeconds.LOGIN_SUCCESS_TIMEOUT,
+            screenshot_name="bmo_post_2fa_redirect_timeout",
+        )
 
     def _download_transactions_via_api(
         self,
@@ -219,10 +230,13 @@ class BMOBank(BankScraper):
 
         account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
         logger.info("Navigating to account details page for web parsing")
-        self.driver.get(account_url)
+        self._navigate("open BMO account details page for web parsing", account_url)
 
-        WebDriverWait(self.driver, DelaySeconds.PAGE_TIMEOUT).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_SECTION_HEADER))
+        self._wait_until(
+            "load BMO transaction section headers",
+            EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_SECTION_HEADER)),
+            DelaySeconds.PAGE_TIMEOUT,
+            screenshot_name="bmo_transactions_load_timeout",
         )
 
         all_transactions: list[tuple[datetime, str, float]] = []
@@ -251,24 +265,40 @@ class BMOBank(BankScraper):
                 break
 
             try:
-                next_btn = self.driver.find_element(By.CSS_SELECTOR, ConnectionElementId.PAGINATION_NEXT_BUTTON)
+                next_btn = self._find_element(
+                    "find BMO pagination next button",
+                    By.CSS_SELECTOR,
+                    ConnectionElementId.PAGINATION_NEXT_BUTTON,
+                )
             except Exception:
+                logger.info("BMO pagination next button not found; stopping pagination")
                 break
 
             if next_btn.get_attribute("disabled") is not None:
                 break
 
-            old_row = self.driver.find_element(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
-            next_btn.click()
+            old_row = self._find_element(
+                "find current BMO transaction row before paginating",
+                By.CSS_SELECTOR,
+                ConnectionElementId.TRANSACTION_ROW_INTERACTIVE,
+            )
+            self._click("click BMO pagination next button", next_btn)
 
             try:
-                WebDriverWait(self.driver, DelaySeconds.PAGINATION_WAIT).until(EC.staleness_of(old_row))
+                self._wait_until(
+                    "wait for BMO previous transaction row to become stale after pagination",
+                    EC.staleness_of(old_row),
+                    DelaySeconds.PAGINATION_WAIT,
+                    timeout_log_level=logging.INFO,
+                )
             except (TimeoutException, StaleElementReferenceException):
-                pass
+                logger.info("BMO previous-row staleness wait did not complete; checking for new rows anyway")
 
             try:
-                WebDriverWait(self.driver, DelaySeconds.PAGINATION_WAIT).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE))
+                self._wait_until(
+                    "load BMO transaction rows after pagination",
+                    EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)),
+                    DelaySeconds.PAGINATION_WAIT,
                 )
             except TimeoutException:
                 logger.warning("Pagination wait timed out — stopping")
@@ -323,17 +353,20 @@ class BMOBank(BankScraper):
 
     def _login(self, username: SecretString, password: SecretString) -> None:
         logger.info("Filling login credentials")
-        self.driver.find_element(By.XPATH, ConnectionElementId.USERNAME).send_keys(username.reveal())
-        self.driver.find_element(By.XPATH, ConnectionElementId.PASSWORD).send_keys(password.reveal())
+        username_field = self._find_element("enter BMO username", By.XPATH, ConnectionElementId.USERNAME)
+        self._send_keys("enter BMO username", username_field, username.reveal(), sensitive=True)
+        password_field = self._find_element("enter BMO password", By.XPATH, ConnectionElementId.PASSWORD)
+        self._send_keys("enter BMO password", password_field, password.reveal(), sensitive=True)
         self._dismiss_cookie_banner()
-        self.driver.find_element(By.XPATH, ConnectionElementId.SIGN_IN).click()
+        sign_in_btn = self._find_element("click BMO sign-in button", By.XPATH, ConnectionElementId.SIGN_IN)
+        self._click("click BMO sign-in button", sign_in_btn)
 
     def _dismiss_cookie_banner(self) -> None:
         try:
             accept_btn = WebDriverWait(self.driver, DelaySeconds.COOKIE_BANNER_TIMEOUT).until(
                 EC.element_to_be_clickable((By.XPATH, ConnectionElementId.COOKIE_ACCEPT))
             )
-            accept_btn.click()
+            self._click("dismiss BMO cookie consent banner", accept_btn)
             WebDriverWait(self.driver, DelaySeconds.COOKIE_BANNER_TIMEOUT).until(
                 EC.invisibility_of_element_located((By.ID, "onetrust-banner-sdk"))
             )
@@ -344,11 +377,13 @@ class BMOBank(BankScraper):
     def _wait_for_2fa_or_success(self) -> Literal["2fa", "success"]:
         """Wait for either the 2FA NEXT button or the success URL after credentials are submitted."""
         try:
-            WebDriverWait(self.driver, DelaySeconds.LOGIN_SUCCESS_TIMEOUT).until(
+            self._wait_until(
+                "reach BMO success URL or detect BMO 2FA screen after login",
                 lambda d: (
                     d.current_url == BMO_SUCCESS_URL
                     or len(d.find_elements(By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON)) > 0
-                )
+                ),
+                DelaySeconds.LOGIN_SUCCESS_TIMEOUT,
             )
         except TimeoutException as e:
             self._save_screenshot("bmo_login_timeout")
@@ -364,33 +399,41 @@ class BMOBank(BankScraper):
     def _handle_2fa_initiation(self) -> None:
         """Drive the steps to request the OTP code be sent to the user's phone."""
         logger.info("2FA screen detected — clicking NEXT")
-        next_btn = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON))
+        next_btn = self._wait_until(
+            "find clickable BMO 2FA next button",
+            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON)),
+            DelaySeconds.MFA_STEP_TIMEOUT,
         )
-        next_btn.click()
+        self._click("click BMO 2FA next button", next_btn)
 
         logger.info("Selecting phone radio button")
-        radio = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_PHONE_RADIO))
+        radio = self._wait_until(
+            "find clickable BMO 2FA phone radio button",
+            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_PHONE_RADIO)),
+            DelaySeconds.MFA_STEP_TIMEOUT,
         )
-        radio.click()
+        self._click("select BMO 2FA phone radio button", radio)
 
         logger.info("Ticking the 'I won't share' checkbox")
-        checkbox = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_AGREE_CHECKBOX))
+        checkbox = self._wait_until(
+            "find clickable BMO 2FA agreement checkbox",
+            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_AGREE_CHECKBOX)),
+            DelaySeconds.MFA_STEP_TIMEOUT,
         )
-        checkbox.click()
+        self._click("tick BMO 2FA agreement checkbox", checkbox)
 
         logger.info("Clicking SEND CODE")
-        send_btn = WebDriverWait(self.driver, DelaySeconds.MFA_STEP_TIMEOUT).until(
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_SEND_CODE))
+        send_btn = self._wait_until(
+            "find clickable BMO send-code button",
+            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_SEND_CODE)),
+            DelaySeconds.MFA_STEP_TIMEOUT,
         )
-        send_btn.click()
+        self._click("click BMO send-code button", send_btn)
 
     def _capture_cookies(self) -> None:
         account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
         logger.info("Navigating to account page to prime XSRF-TOKEN cookie")
-        self.driver.get(account_url)
+        self._navigate("open BMO account page to prime XSRF token cookie", account_url)
         sleep(DelaySeconds.ACCOUNT_NAV_WAIT)
 
         self.cookies = self.driver.get_cookies()
