@@ -12,7 +12,7 @@ from typing import Any, Final, Literal
 
 import requests
 from selenium.common import TimeoutException
-from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -45,12 +45,13 @@ class BMOBank(BankScraper):
     def start_auth(self, **kwargs: Any) -> AuthStep:
         account_uuid: str = kwargs["account_uuid"]
         self._account_uuid = account_uuid
+        username = get_required_env_var("PENNYSPY_BMOU")
+        password = get_required_env_var("PENNYSPY_BMOPP")
+
         logger.info("Navigating to BMO login page")
         self._navigate("open BMO login page", BMO_LOGIN_URL)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
 
-        username = get_required_env_var("PENNYSPY_BMOU")
-        password = get_required_env_var("PENNYSPY_BMOPP")
         self._login(username, password)
 
         outcome = self._wait_for_2fa_or_success()
@@ -358,8 +359,40 @@ class BMOBank(BankScraper):
         password_field = self._find_element("enter BMO password", By.XPATH, ConnectionElementId.PASSWORD)
         self._send_keys("enter BMO password", password_field, password.reveal(), sensitive=True)
         self._dismiss_cookie_banner()
+        self._ensure_password_populated(password)
         sign_in_btn = self._find_element("click BMO sign-in button", By.XPATH, ConnectionElementId.SIGN_IN)
         self._click("click BMO sign-in button", sign_in_btn)
+
+    def _ensure_password_populated(self, password: SecretString) -> None:
+        logger.info("Verifying BMO password field remains populated after cookie-banner handling")
+        try:
+            password_field = self._find_element(
+                "verify BMO password before sign-in",
+                By.XPATH,
+                ConnectionElementId.PASSWORD,
+            )
+            password_value = password_field.get_attribute("value")
+        except WebDriverException as e:
+            self._save_screenshot("bmo_password_verification_failed")
+            raise WebDriverException("Failed while verifying BMO password before sign-in") from e
+
+        if password_value:
+            logger.info("BMO password field is populated before sign-in")
+            return
+
+        logger.warning("BMO password field was empty before sign-in; re-entering the redacted password")
+        try:
+            self._send_keys("re-enter BMO password before sign-in", password_field, password.reveal(), sensitive=True)
+            password_value = password_field.get_attribute("value")
+        except WebDriverException as e:
+            self._save_screenshot("bmo_password_reentry_failed")
+            raise WebDriverException("Failed while re-entering and verifying BMO password before sign-in") from e
+
+        if not password_value:
+            self._save_screenshot("bmo_password_reentry_empty")
+            raise WebDriverException("BMO password field remained empty after re-entry before sign-in")
+
+        logger.info("BMO password field is populated after re-entry")
 
     def _dismiss_cookie_banner(self) -> None:
         try:
