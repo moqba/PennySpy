@@ -17,6 +17,12 @@ jobs:
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
 
+      - name: Install test dependencies
+        run: uv sync --all-extras --locked
+
+      - name: Check pinned Chrome version
+        run: uv run pytest pennyspy/tests/test_chrome_version.py
+
       - name: Update uv lockfile
         run: uv lock
 

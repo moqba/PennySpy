@@ -153,11 +153,11 @@ class ScotiaBank(BankScraper):
         logger.info("Looking for username field")
         username_field = self._find_element("enter Scotiabank username", By.XPATH, ConnectionElementId.USERNAME)
         logger.info("Username field found — filling credentials")
-        self._send_keys("enter Scotiabank username", username_field, username.reveal(), sensitive=True)
+        self._send_keys_verified("enter Scotiabank username", username_field, username.reveal(), sensitive=True)
 
         password_field = self._find_element("enter Scotiabank password", By.XPATH, ConnectionElementId.PASSWORD)
         logger.info("Password field found — filling password")
-        self._send_keys("enter Scotiabank password", password_field, password.reveal(), sensitive=True)
+        self._send_keys_verified("enter Scotiabank password", password_field, password.reveal(), sensitive=True)
 
         sign_in_btn = self._find_element("click Scotiabank login submit button", By.XPATH, ConnectionElementId.SIGN_IN)
         logger.info("Sign-in button found — clicking")

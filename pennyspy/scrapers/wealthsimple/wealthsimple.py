@@ -198,7 +198,7 @@ class Wealthsimple(BankScraper):
         otp_field = self._find_element("enter Wealthsimple OTP code", By.XPATH, ConnectionElementXpath.PHONE_2FA)
         if not otp_field:
             raise ValueError("No OTP detected")
-        self._send_keys("enter Wealthsimple OTP code", otp_field, otp_code, sensitive=True)
+        self._send_keys_verified("enter Wealthsimple OTP code", otp_field, otp_code, sensitive=True)
         time.sleep(1)
         submit_btn = self._find_element("submit Wealthsimple OTP code", By.XPATH, ConnectionElementXpath.SUBMIT)
         self._click("submit Wealthsimple OTP code", submit_btn)
@@ -247,7 +247,7 @@ class Wealthsimple(BankScraper):
             if not load_more:
                 break
             prev_count = len(self.driver.find_elements(By.XPATH, ActivityXpath.TRANSACTION_EXPENSION))
-            self._click("click Wealthsimple Load more button", load_more[0])
+            self._click("click Wealthsimple Load more button", load_more[0], paced=False)
             self._wait_until(
                 "load more Wealthsimple activity rows",
                 lambda d: len(d.find_elements(By.XPATH, ActivityXpath.TRANSACTION_EXPENSION)) > prev_count,
@@ -311,7 +311,7 @@ class Wealthsimple(BankScraper):
 
                 if button.get_attribute("aria-expanded") != "true":
                     self.driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", button)
-                    self._click(f"expand Wealthsimple activity region {region_id}", button)
+                    self._click(f"expand Wealthsimple activity region {region_id}", button, paced=False)
                     # Wait for region content to render, not just element presence —
                     # "In progress" transactions have a lazily-populated region.
                     self._wait_until(
@@ -357,9 +357,9 @@ class Wealthsimple(BankScraper):
     def _login(self, username: SecretString, password: SecretString):
         logger.info("logging in...")
         username_field = self._find_element("enter Wealthsimple username", By.XPATH, ConnectionElementXpath.USERNAME)
-        self._send_keys("enter Wealthsimple username", username_field, username.reveal(), sensitive=True)
+        self._send_keys_verified("enter Wealthsimple username", username_field, username.reveal(), sensitive=True)
         password_field = self._find_element("enter Wealthsimple password", By.XPATH, ConnectionElementXpath.PASSWORD)
-        self._send_keys("enter Wealthsimple password", password_field, password.reveal(), sensitive=True)
+        self._send_keys_verified("enter Wealthsimple password", password_field, password.reveal(), sensitive=True)
         submit_btn = self._find_element("click Wealthsimple login submit button", By.XPATH, ConnectionElementXpath.SUBMIT)
         self._click("click Wealthsimple login submit button", submit_btn)
 

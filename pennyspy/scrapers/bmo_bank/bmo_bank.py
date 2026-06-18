@@ -103,7 +103,7 @@ class BMOBank(BankScraper):
             )
         except TimeoutException as e:
             raise TimeoutException("Couldn't find OTP input field while completing BMO 2FA") from e
-        self._send_keys("enter BMO OTP code", otp_field, otp_code, sensitive=True)
+        self._send_keys_verified("enter BMO OTP code", otp_field, otp_code, sensitive=True)
 
         try:
             confirm_btn = self._wait_until(
@@ -123,7 +123,8 @@ class BMOBank(BankScraper):
                 DelaySeconds.TWO_FACTOR_TIMEOUT,
             )
         except TimeoutException as e:
-            raise TimeoutException("Continue button after OTP is not available/clickable while completing BMO 2FA") from e
+            raise TimeoutException(
+                "Continue button after OTP is not available/clickable while completing BMO 2FA") from e
         self._click("click BMO continue button after OTP", continue_btn)
 
         logger.info("Waiting for post-2FA redirect to %s", BMO_SUCCESS_URL)
@@ -135,10 +136,10 @@ class BMOBank(BankScraper):
         )
 
     def _download_transactions_via_api(
-        self,
-        app_type: AppType,
-        statement_date: StatementDate,
-        export_directory: Path | str,
+            self,
+            app_type: AppType,
+            statement_date: StatementDate,
+            export_directory: Path | str,
     ) -> Path:
         assert self.cookies is not None, "Cookies have not been captured yet."
         assert self._account_uuid is not None
@@ -222,9 +223,9 @@ class BMOBank(BankScraper):
         return file_path
 
     def _parse_transactions_from_web(
-        self,
-        from_date: datetime,
-        export_directory: Path,
+            self,
+            from_date: datetime,
+            export_directory: Path,
     ) -> Path:
         assert self._account_uuid is not None
         export_directory.mkdir(parents=True, exist_ok=True)
@@ -353,12 +354,14 @@ class BMOBank(BankScraper):
         return transactions
 
     def _login(self, username: SecretString, password: SecretString) -> None:
+        is_cookie_banner_already_dismissed = self._dismiss_cookie_banner()
         logger.info("Filling login credentials")
         username_field = self._find_element("enter BMO username", By.XPATH, ConnectionElementId.USERNAME)
-        self._send_keys("enter BMO username", username_field, username.reveal(), sensitive=True)
+        if not is_cookie_banner_already_dismissed:
+            self._dismiss_cookie_banner()
+        self._send_keys_verified("enter BMO username", username_field, username.reveal(), sensitive=True)
         password_field = self._find_element("enter BMO password", By.XPATH, ConnectionElementId.PASSWORD)
-        self._send_keys("enter BMO password", password_field, password.reveal(), sensitive=True)
-        self._dismiss_cookie_banner()
+        self._send_keys_verified("enter BMO password", password_field, password.reveal(), sensitive=True)
         self._ensure_password_populated(password)
         sign_in_btn = self._find_element("click BMO sign-in button", By.XPATH, ConnectionElementId.SIGN_IN)
         self._click("click BMO sign-in button", sign_in_btn)
@@ -376,25 +379,21 @@ class BMOBank(BankScraper):
             self._save_screenshot("bmo_password_verification_failed")
             raise WebDriverException("Failed while verifying BMO password before sign-in") from e
 
-        if password_value:
+        if password_value == password.reveal():
             logger.info("BMO password field is populated before sign-in")
             return
 
-        logger.warning("BMO password field was empty before sign-in; re-entering the redacted password")
-        try:
-            self._send_keys("re-enter BMO password before sign-in", password_field, password.reveal(), sensitive=True)
-            password_value = password_field.get_attribute("value")
-        except WebDriverException as e:
-            self._save_screenshot("bmo_password_reentry_failed")
-            raise WebDriverException("Failed while re-entering and verifying BMO password before sign-in") from e
-
-        if not password_value:
-            self._save_screenshot("bmo_password_reentry_empty")
-            raise WebDriverException("BMO password field remained empty after re-entry before sign-in")
-
+        logger.warning("BMO password field was cleared before sign-in; re-entering the redacted password")
+        self._send_keys_verified(
+            "re-enter BMO password before sign-in",
+            password_field,
+            password.reveal(),
+            sensitive=True,
+            screenshot_name="bmo_password_reentry_empty",
+        )
         logger.info("BMO password field is populated after re-entry")
 
-    def _dismiss_cookie_banner(self) -> None:
+    def _dismiss_cookie_banner(self) -> bool:
         try:
             accept_btn = WebDriverWait(self.driver, DelaySeconds.COOKIE_BANNER_TIMEOUT).until(
                 EC.element_to_be_clickable((By.XPATH, ConnectionElementId.COOKIE_ACCEPT))
@@ -404,18 +403,34 @@ class BMOBank(BankScraper):
                 EC.invisibility_of_element_located((By.ID, "onetrust-banner-sdk"))
             )
             logger.info("Cookie consent banner dismissed")
+            return True
         except TimeoutException:
             logger.info("No cookie consent banner found, proceeding")
+            return False
 
     def _wait_for_2fa_or_success(self) -> Literal["2fa", "success"]:
-        """Wait for either the 2FA NEXT button or the success URL after credentials are submitted."""
+        """Wait for either the 2FA NEXT button or the success URL after credentials are submitted.
+
+        Logs the BMO login error banner text as soon as it appears, while continuing to wait
+        for the normal outcome (or the timeout) so behavior is otherwise unchanged.
+        """
+        logged_errors: set[str] = set()
+
+        def reached_outcome(driver) -> bool:
+            if driver.current_url == BMO_SUCCESS_URL:
+                return True
+            if driver.find_elements(By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON):
+                return True
+            banner_text = self._extract_login_error()
+            if banner_text and banner_text not in logged_errors:
+                logged_errors.add(banner_text)
+                logger.error("BMO login error banner displayed: %s", banner_text)
+            return False
+
         try:
             self._wait_until(
                 "reach BMO success URL or detect BMO 2FA screen after login",
-                lambda d: (
-                    d.current_url == BMO_SUCCESS_URL
-                    or len(d.find_elements(By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON)) > 0
-                ),
+                reached_outcome,
                 DelaySeconds.LOGIN_SUCCESS_TIMEOUT,
             )
         except TimeoutException as e:

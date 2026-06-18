@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.6
 
 ARG PYTHON_VERSION=3.11-slim-bookworm
-ARG CHROME_VERSION=138.0.7204.94
+ARG CHROME_VERSION=150.0.7871.24
 ARG UV_VERSION=0.11.19
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
