@@ -594,7 +594,7 @@ wheels = [
 
 [[package]]
 name = "pennyspy"
-version = "0.5.15"
+version = "0.5.17"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },

@@ -73,9 +73,9 @@ class RBCBank(BankScraper):
     def _login(self, username: SecretString, password: SecretString):
         logger.info("logging in...")
         username_field = self._find_element("enter RBC username", By.ID, ConnectionElementId.USERNAME)
-        self._send_keys("enter RBC username", username_field, username.reveal(), sensitive=True)
+        self._send_keys_verified("enter RBC username", username_field, username.reveal(), sensitive=True)
         password_field = self._find_element("enter RBC password", By.ID, ConnectionElementId.PASSWORD)
-        self._send_keys("enter RBC password", password_field, password.reveal(), sensitive=True)
+        self._send_keys_verified("enter RBC password", password_field, password.reveal(), sensitive=True)
         self._submit("submit RBC login form", password_field)
 
     def _accept_cookies_if_visible(self):
