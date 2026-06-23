@@ -1,26 +1,39 @@
 import json
 from logging import getLogger
 
-from selenium.webdriver.common.by import By
-
 from pennyspy.scrapers.bot_detection_checker.bot_detection_checker import BotDetectionChecker
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
-from pennyspy.scrapers.scraper import Scraper
+from pennyspy.scrapers.zen_scraper import By, ZenScraper
 
 logger = getLogger(__name__)
 
 
-class RebrowserBotDetector(Scraper, BotDetectionChecker):
+class RebrowserBotDetector(ZenScraper, BotDetectionChecker):
     URL = r"https://bot-detector.rebrowser.net/"
 
     def get_test_result(self) -> list[dict[str, object]]:
         self._navigate("open Rebrowser bot-detection page", self.URL)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         result_text_area = self._find_element("read Rebrowser bot-detection JSON result", By.ID, "detections-json")
-        raw_value = result_text_area.get_attribute("value")
-        assert raw_value is not None, "Could not read detections JSON"
-        result: list[dict[str, object]] = json.loads(raw_value)
-        return result
+
+        # The textarea exists immediately but the page fills its JSON asynchronously. The
+        # CDP-native engine reads fast enough to beat that population, so poll until the JSON
+        # parses to a non-empty list rather than reading once.
+        def detections_ready(_driver) -> list[dict[str, object]] | None:
+            raw_value = result_text_area.get_attribute("value")
+            if not raw_value or not raw_value.strip():
+                return None
+            try:
+                parsed = json.loads(raw_value)
+            except json.JSONDecodeError:
+                return None
+            return parsed or None
+
+        return self._wait_until(
+            "populate Rebrowser bot-detection JSON result",
+            detections_ready,
+            DelaySeconds.PAGE_LOADING,
+        )
 
     def _is_test_skipped(self, test_result: dict[str, object]) -> bool:
         return bool(test_result["rating"] == 0)

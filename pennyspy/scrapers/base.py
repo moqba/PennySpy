@@ -5,7 +5,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from pennyspy.scrapers.scraper import BrowserConfig, Scraper
+from pennyspy.scrapers.scraper import BrowserConfig
+from pennyspy.scrapers.zen_scraper import ZenScraper
 
 
 @dataclass
@@ -23,18 +24,19 @@ class AuthStep:
     message: str = ""
 
 
-class BankScraper(Scraper, ABC):
-    """Abstract interface that every bank scraper must implement.
+class BankScraperInterface(ABC):
+    """Interface every bank scraper implements.
+
+    All scrapers run on the CDP-native zendriver :class:`ZenScraper` engine (via
+    :class:`ZenBankScraper`). The router and session manager type against this
+    interface rather than the engine.
 
     Each concrete scraper should accept typed keyword arguments in its
-    ``start_auth`` and ``download_transactions`` overrides rather than
-    relying on untyped ``**kwargs``.  The ``**kwargs`` in the ABC signature
-    exists only so the generic router can forward arbitrary per-bank
-    parameters without knowing the concrete type.
+    ``start_auth`` and ``download_transactions`` overrides rather than relying on
+    untyped ``**kwargs``. The ``**kwargs`` in the ABC signature exists only so the
+    generic router can forward arbitrary per-bank parameters without knowing the
+    concrete type.
     """
-
-    def __init__(self, config: BrowserConfig = BrowserConfig()):
-        super().__init__(config=config)
 
     @abstractmethod
     def start_auth(self, **kwargs: Any) -> AuthStep:
@@ -54,3 +56,18 @@ class BankScraper(Scraper, ABC):
     @abstractmethod
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
         """Download transactions and return the path to the resulting file."""
+
+    @abstractmethod
+    def quit(self) -> None:
+        """Tear down the browser and release resources."""
+
+
+class ZenBankScraper(ZenScraper, BankScraperInterface, ABC):
+    """Bank scraper backed by the CDP-native zendriver engine.
+
+    zendriver drives Chrome directly over CDP with no chromedriver binary, which
+    removes the automation tells that got stock Selenium blocked by bank WAFs.
+    """
+
+    def __init__(self, config: BrowserConfig = BrowserConfig()):
+        super().__init__(config=config)

@@ -5,6 +5,7 @@ class DelaySeconds(IntEnum):
     COOKIE_INIT = 10
     LOGIN_ATTEMPT = 5
     ACTION_REFRESH = 2
+    ROW_RENDER = 10
     PAGE_LOADING = 20
     PAGE_TIMEOUT = 60
     COOKIE_PROMPT_TIMEOUT = 60

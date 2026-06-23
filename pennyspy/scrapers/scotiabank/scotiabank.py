@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import csv
 import logging
-import shutil
 import zipfile
 from datetime import date
 from http import HTTPStatus
@@ -11,16 +10,13 @@ from time import sleep
 from typing import Any, Final
 
 import requests
-from selenium.common import TimeoutException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 
-from pennyspy.scrapers.base import AuthStep, BankScraper
+from pennyspy.scrapers.base import AuthStep, ZenBankScraper
 from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
 from pennyspy.scrapers.scotiabank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.scotiabank.delay_seconds import DelaySeconds
-from pennyspy.scrapers.scraper import BrowserConfig, create_browser
+from pennyspy.scrapers.scraper import BrowserConfig
+from pennyspy.scrapers.zen_scraper import By, TimeoutException, clickable, present, url_contains, visible
 
 SCOTIA_HOME_URL: Final[str] = "https://www.scotiabank.com/ca/en/personal.html"
 SCOTIA_SIGN_IN_LINK: Final[str] = "//a[contains(@class, 'btn-signin')]"
@@ -31,7 +27,7 @@ SCOTIA_TRANSACTIONS_URL: Final[str] = "https://secure.scotiabank.com/api/transac
 logger = logging.getLogger(__name__)
 
 
-class ScotiaBank(BankScraper):
+class ScotiaBank(ZenBankScraper):
     def __init__(self, config: BrowserConfig = BrowserConfig()):
         super().__init__(config=config)
         self.cookies: list[dict] | None = None
@@ -39,15 +35,6 @@ class ScotiaBank(BankScraper):
     # ── BankScraper interface ──────────────────────────────────────────
 
     def start_auth(self, **kwargs: Any) -> AuthStep:
-        # Temporary: allow overriding headless mode for debugging
-        headless = kwargs.get("headless", True)
-        if not headless and self._config.headless:
-            logger.info("Rebuilding browser in non-headless mode for debugging")
-            self.driver.quit()
-            shutil.rmtree(self._user_data_dir, ignore_errors=True)
-            config = BrowserConfig(headless=False)
-            self.driver, self._user_data_dir = create_browser(config)
-
         try:
             return self._do_start_auth()
         except Exception:
@@ -66,7 +53,7 @@ class ScotiaBank(BankScraper):
         logger.info("Clicking Sign In button")
         sign_in_link = self._wait_until(
             "find clickable Scotiabank home-page Sign In button",
-            EC.element_to_be_clickable((By.XPATH, SCOTIA_SIGN_IN_LINK)),
+            clickable(By.XPATH, SCOTIA_SIGN_IN_LINK),
             DelaySeconds.PAGE_LOADING,
             screenshot_name="scotia_sign_in_button_timeout",
         )
@@ -75,7 +62,7 @@ class ScotiaBank(BankScraper):
         logger.info("Waiting for login form to load")
         self._wait_until(
             "load Scotiabank login form username field",
-            EC.presence_of_element_located((By.XPATH, ConnectionElementId.USERNAME)),
+            present(By.XPATH, ConnectionElementId.USERNAME),
             DelaySeconds.PAGE_LOADING,
             screenshot_name="scotia_login_form_timeout",
         )
@@ -167,14 +154,18 @@ class ScotiaBank(BankScraper):
     def _check_for_wrong_login(self) -> None:
         logger.info("Checking for login error banner (waiting up to %ds)", DelaySeconds.PAGE_LOADING)
         try:
-            WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING).until(
-                EC.visibility_of_element_located((By.XPATH, ConnectionElementId.LOGIN_ERROR))
+            self._wait_until(
+                "check for Scotiabank login error banner",
+                visible(By.XPATH, ConnectionElementId.LOGIN_ERROR),
+                DelaySeconds.PAGE_LOADING,
+                timeout_log_level=logging.INFO,
             )
-            self._save_screenshot("scotia_wrong_login")
-            raise ValueError("Username and password seem to be invalid, failed to connect.")
         except TimeoutException:
             logger.info("No error banner detected — credentials appear valid")
             logger.info("Current URL after credential check: %s", self.driver.current_url)
+            return
+        self._save_screenshot("scotia_wrong_login")
+        raise ValueError("Username and password seem to be invalid, failed to connect.")
 
     def _wait_for_2sv_or_success(self) -> str:
         """Wait for either 2SV prompt or direct redirect to success domain.
@@ -207,7 +198,7 @@ class ScotiaBank(BankScraper):
         try:
             checkbox = self._wait_until(
                 "find clickable Scotiabank trust-device checkbox",
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CHECKBOX)),
+                clickable(By.XPATH, ConnectionElementId.TRUST_DEVICE_CHECKBOX),
                 DelaySeconds.COOKIE_INIT,
                 timeout_log_level=logging.INFO,
             )
@@ -219,7 +210,7 @@ class ScotiaBank(BankScraper):
         logger.info("Clicking continue button")
         continue_btn = self._wait_until(
             "find clickable Scotiabank trust-device continue button",
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.TRUST_DEVICE_CONTINUE)),
+            clickable(By.XPATH, ConnectionElementId.TRUST_DEVICE_CONTINUE),
             DelaySeconds.PAGE_LOADING,
             screenshot_name="scotia_trust_device_continue_timeout",
         )
@@ -230,7 +221,7 @@ class ScotiaBank(BankScraper):
         )
         self._wait_until(
             f"redirect to Scotiabank authenticated domain {SCOTIA_SUCCESS_DOMAIN}",
-            EC.url_contains(SCOTIA_SUCCESS_DOMAIN),
+            url_contains(SCOTIA_SUCCESS_DOMAIN),
             DelaySeconds.LOGIN_SUCCESS_TIMEOUT,
             screenshot_name="scotia_success_redirect_timeout",
         )
@@ -241,7 +232,7 @@ class ScotiaBank(BankScraper):
         try:
             accept_btn = self._wait_until(
                 "find clickable Scotiabank cookie consent button",
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.COOKIE_ACCEPT)),
+                clickable(By.XPATH, ConnectionElementId.COOKIE_ACCEPT),
                 DelaySeconds.COOKIE_INIT,
                 timeout_log_level=logging.INFO,
             )

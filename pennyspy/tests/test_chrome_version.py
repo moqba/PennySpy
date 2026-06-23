@@ -16,9 +16,11 @@ def _version_tuple(version: str) -> tuple[int, ...]:
 
 
 def _dockerfile_chrome_version() -> str:
+    # Chrome comes from the selenium base image; its tag (e.g. "148.0-20260505") leads with the
+    # Chrome major.minor version, which is what we validate against the latest stable release.
     dockerfile = DOCKERFILE.read_text(encoding="utf-8")
-    match = re.search(r"^ARG\s+CHROME_VERSION\s*=\s*([^\s#]+)", dockerfile, re.MULTILINE)
-    assert match, "Dockerfile must define ARG CHROME_VERSION=<version>"
+    match = re.search(r"^ARG\s+SELENIUM_VERSION\s*=\s*(\d+(?:\.\d+)*)", dockerfile, re.MULTILINE)
+    assert match, "Dockerfile must define ARG SELENIUM_VERSION=<chrome-version>[-<date>]"
     return match.group(1)
 
 
@@ -39,6 +41,6 @@ def test_dockerfile_chrome_version_is_not_more_than_six_releases_behind_stable()
     latest_major = _version_tuple(latest_version)[0]
 
     assert latest_major - pinned_major <= MAX_CHROME_MAJOR_VERSION_LAG, (
-        f"Dockerfile CHROME_VERSION is too old: pinned {pinned_version}, latest stable is {latest_version}. "
+        f"Selenium base image Chrome is too old: pinned {pinned_version}, latest stable is {latest_version}. "
         f"The pinned version may be at most {MAX_CHROME_MAJOR_VERSION_LAG} major releases behind stable."
     )

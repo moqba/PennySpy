@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pennyspy"
-version = "0.5.17"
+version = "0.6.1"
 description = "Scrape transaction history from banks"
 readme = "README.md"
 license = "MIT"
@@ -14,15 +14,14 @@ authors = [
 ]
 dependencies = [
     "beautifulsoup4",
-    "browserforge>=1.2.4",
     "fastapi",
     "ofxtools",
     "pandas",
     "pydantic",
     "python-dotenv>=1.2.2",
     "requests",
-    "selenium",
     "uvicorn",
+    "zendriver>=0.15.3",
 ]
 
 [project.optional-dependencies]

@@ -4,6 +4,9 @@ services:
     environment:
       # Uncomment any of the lines below to set configuration options
       # - PENNYSPY_PORT=5056
+      # The browser is visible by default. Set this to true to run headless
+      # (no live view, lower resource use).
+      # - PENNYSPY_HEADLESS=true
       # Save current page HTML next to scraper failure diagnostics when set.
       # Captured pages may include sensitive bank page content.
       # - PENNYSPY_FAILURE_HTML_DIR=/app/data/failure-html
@@ -15,8 +18,12 @@ services:
       - .env
     volumes:
       - "./pennyspy-data:/app/data"
+    # Chrome benefits from a larger /dev/shm; recommended by the selenium base image.
+    shm_size: "2g"
     ports:
       - '5056:5056'
+      # noVNC: open http://localhost:7900 to watch the browser live (default password: secret).
+      - '7900:7900'
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "python", "-c", "import os,urllib.request,sys; port=os.environ.get('PENNYSPY_PORT','5056'); sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/docs', timeout=3).status==200 else 1)"]

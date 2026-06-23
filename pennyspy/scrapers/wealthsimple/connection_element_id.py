@@ -8,6 +8,7 @@ class ConnectionElementXpath(StrEnum):
     USER_INCORRECT = '//p[contains(text(), "Your email or password was incorrect")]'
     PHONE_2FA = '//input[@type="text" and @autocomplete="one-time-code" and @placeholder="– – – – – –"]'
     FAILED_2FA = '//div[@role="alert" and contains(text(), "Try again or get a new code")]'
+    PASSKEY_MAYBE_LATER = '//button[@role="button" and .//span[normalize-space()="Maybe later"]]'
 
 
 class ActivityElementXpath(StrEnum):
