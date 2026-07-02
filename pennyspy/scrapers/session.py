@@ -4,7 +4,7 @@ import logging
 import time
 import uuid
 
-from pennyspy.scrapers.base import BankScraper
+from pennyspy.scrapers.base import BankScraperInterface
 
 logger = logging.getLogger(__name__)
 
@@ -18,15 +18,15 @@ class ScraperSessionManager:
 
     def __init__(self, ttl_seconds: int = 600):
         self._ttl = ttl_seconds
-        self._sessions: dict[str, tuple[BankScraper, type[BankScraper], float]] = {}
+        self._sessions: dict[str, tuple[BankScraperInterface, type[BankScraperInterface], float]] = {}
 
-    def create(self, scraper: BankScraper) -> str:
+    def create(self, scraper: BankScraperInterface) -> str:
         self._cleanup_stale()
         session_id = str(uuid.uuid4())
         self._sessions[session_id] = (scraper, type(scraper), time.monotonic())
         return session_id
 
-    def get(self, session_id: str, expected_type: type[BankScraper] | None = None) -> BankScraper:
+    def get(self, session_id: str, expected_type: type[BankScraperInterface] | None = None) -> BankScraperInterface:
         entry = self._sessions.get(session_id)
         if entry is None:
             raise KeyError(f"Session {session_id} not found")

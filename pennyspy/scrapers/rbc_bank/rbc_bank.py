@@ -8,18 +8,15 @@ from time import sleep
 from typing import Any, Final
 
 import requests
-from selenium.common import TimeoutException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 
-from pennyspy.scrapers.base import AuthStep, BankScraper
+from pennyspy.scrapers.base import AuthStep, ZenBankScraper
 from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
 from pennyspy.scrapers.rbc_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.rbc_bank.get_default_filename import get_default_filename
 from pennyspy.scrapers.rbc_bank.request_options import AccountInfo, Include, Software
 from pennyspy.scrapers.scraper import BrowserConfig
+from pennyspy.scrapers.zen_scraper import By, TimeoutException, present, url_contains
 
 RBC_MAINPAGE: Final[str] = (
     "https://www1.royalbank.com/cgi-bin/rbaccess/rbunxcgi?F6=1&F7=IB&F21=IB&F22=IB&REQUEST=ClientSignin&LANGUAGE=ENGLISH"
@@ -28,7 +25,7 @@ RBC_MAINPAGE: Final[str] = (
 logger = logging.getLogger(__name__)
 
 
-class RBCBank(BankScraper):
+class RBCBank(ZenBankScraper):
     def __init__(self, config: BrowserConfig = BrowserConfig()):
         super().__init__(config=config)
         self.cookies: list[dict] | None = None
@@ -52,7 +49,6 @@ class RBCBank(BankScraper):
 
     def continue_auth(self, *, otp_code: str | None = None) -> AuthStep:
         self._wait_for_2fa()
-        self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
         sleep(DelaySeconds.COOKIE_INIT)
         self.cookies = self.driver.get_cookies()
         return AuthStep(status="authenticated")
@@ -79,22 +75,26 @@ class RBCBank(BankScraper):
         self._submit("submit RBC login form", password_field)
 
     def _accept_cookies_if_visible(self):
-        logger.info("Checking for RBC cookie prompt (timeout: %ss)", DelaySeconds.COOKIE_PROMPT_TIMEOUT.value)
         try:
-            accept_cookies = WebDriverWait(self.driver, DelaySeconds.COOKIE_PROMPT_TIMEOUT.value).until(
-                EC.presence_of_element_located((By.ID, "onetrust-accept-btn-handler"))
+            accept_cookies = self._wait_until(
+                "find RBC cookie prompt",
+                present(By.ID, "onetrust-accept-btn-handler"),
+                DelaySeconds.COOKIE_PROMPT_TIMEOUT,
+                timeout_log_level=logging.INFO,
             )
             self._click("accept RBC cookie prompt", accept_cookies)
         except TimeoutException:
             logger.info("RBC cookie prompt not found within %ss; continuing", DelaySeconds.COOKIE_PROMPT_TIMEOUT.value)
 
     def _check_for_wrong_login(self):
-        logger.info("Checking for RBC invalid-login prompt (timeout: %ss)", DelaySeconds.PAGE_LOADING.value)
         try:
-            WebDriverWait(self.driver, DelaySeconds.PAGE_LOADING.value).until(
-                EC.presence_of_element_located((By.ID, ConnectionElementId.WRONG_USER_PROMPT))
+            self._wait_until(
+                "check for RBC invalid-login prompt",
+                present(By.ID, ConnectionElementId.WRONG_USER_PROMPT),
+                DelaySeconds.PAGE_LOADING,
+                timeout_log_level=logging.INFO,
             )
-        except TimeoutException as _:
+        except TimeoutException:
             logger.info("No RBC invalid-login prompt detected; continuing")
             return
         raise ValueError("Username and password seems to be invalid, failed to connect.")
@@ -102,7 +102,7 @@ class RBCBank(BankScraper):
     def _wait_for_2fa(self):
         self._wait_until(
             "receive RBC 2FA approval and reach account summary",
-            EC.url_contains("summary"),
+            url_contains("summary"),
             DelaySeconds.TWO_FACTOR_TIMEOUT,
             screenshot_name="timeout_2fa",
         )

@@ -11,7 +11,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from pennyspy.scrapers.base import BankScraper
+from pennyspy.scrapers.base import BankScraperInterface
 from pennyspy.scrapers.session import ScraperSessionManager
 
 logger = getLogger(__name__)
@@ -24,12 +24,12 @@ class VerifyParams(BaseModel):
 
 def create_scraper_router(
     *,
-    scraper_type: type[BankScraper],
+    scraper_type: type[BankScraperInterface],
     login_params_model: type[BaseModel] | None = None,
     scrape_params_model: type[BaseModel],
     session_manager: ScraperSessionManager,
 ) -> APIRouter:
-    """Build a standard 3-endpoint router (login -> verify -> scrape) for any BankScraper.
+    """Build a standard 3-endpoint router (login -> verify -> scrape) for any BankScraperInterface.
 
     ``scraper_type`` is the concrete scraper class.  It is used both as the
     factory (called with no arguments to create instances) and to scope
@@ -39,7 +39,7 @@ def create_scraper_router(
 
     router = APIRouter()
 
-    def _get_scraper(session_id: str) -> BankScraper:
+    def _get_scraper(session_id: str) -> BankScraperInterface:
         try:
             return session_manager.get(session_id, expected_type=scraper_type)
         except KeyError as e:

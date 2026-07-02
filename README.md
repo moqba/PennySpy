@@ -29,8 +29,16 @@ for required env variables, view the [setup](#Setup) for the bank of choice.
 ### Launch container using docker command
 It is possible, alternatively, to use docker using this command.
 ```shell
-docker run --restart=unless-stopped -d -p 5056:5056 -v YOUR/PATH/TO/DATA:/app/data --name pennyspy moqba/pennyspy:latest
+docker run --restart=unless-stopped -d -p 5056:5056 -p 7900:7900 --shm-size=2g -v YOUR/PATH/TO/DATA:/app/data --name pennyspy moqba/pennyspy:latest
 ```
+
+### Watch the browser live
+The image runs Chrome **visibly** on a virtual display and ships a built-in noVNC viewer, so you can
+watch a scrape happen in real time — handy for debugging logins and 2FA. Once the container is
+running, open **http://localhost:7900** in your browser (default password: `secret`).
+
+The browser is visible by default. To run it headless instead (no live view, lower resource use),
+set `PENNYSPY_HEADLESS=true` in your environment / `docker-compose.yml`.
 
 ## Python package
 Pennyspy can be installed a python package :  

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import logging
 import re
 import secrets
@@ -11,19 +12,25 @@ from time import sleep
 from typing import Any, Final, Literal
 
 import requests
-from selenium.common import TimeoutException
-from selenium.common.exceptions import StaleElementReferenceException, WebDriverException
-from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 
-from pennyspy.scrapers.base import AuthStep, BankScraper
+from pennyspy.scrapers.base import AuthStep, ZenBankScraper
 from pennyspy.scrapers.bmo_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.bmo_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.bmo_bank.get_default_filename import get_default_filename
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
 from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
 from pennyspy.scrapers.scraper import BrowserConfig
+from pennyspy.scrapers.zen_scraper import (
+    By,
+    StaleElementReferenceException,
+    TimeoutException,
+    WebDriverException,
+    clickable,
+    invisible,
+    present,
+    url_to_be,
+    visible,
+)
 
 BMO_LOGIN_URL: Final[str] = "https://www1.bmo.com/banking/digital/login"
 BMO_SUCCESS_URL: Final[str] = "https://www1.bmo.com/banking/digital/accounts"
@@ -32,7 +39,7 @@ BMO_DOWNLOAD_URL: Final[str] = "https://www1.bmo.com/banking/services/accountdet
 logger = logging.getLogger(__name__)
 
 
-class BMOBank(BankScraper):
+class BMOBank(ZenBankScraper):
     def __init__(self, config: BrowserConfig = BrowserConfig()):
         super().__init__(config=config)
         self.cookies: list[dict] | None = None
@@ -98,7 +105,7 @@ class BMOBank(BankScraper):
         try:
             otp_field = self._wait_until(
                 "find visible BMO OTP input field",
-                EC.visibility_of_element_located((By.XPATH, ConnectionElementId.OTP_INPUT)),
+                visible(By.XPATH, ConnectionElementId.OTP_INPUT),
                 DelaySeconds.MFA_STEP_TIMEOUT,
             )
         except TimeoutException as e:
@@ -108,29 +115,31 @@ class BMOBank(BankScraper):
         try:
             confirm_btn = self._wait_until(
                 "find clickable BMO OTP confirm button",
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONFIRM)),
+                clickable(By.XPATH, ConnectionElementId.MFA_CONFIRM),
                 DelaySeconds.MFA_STEP_TIMEOUT,
             )
         except TimeoutException as e:
             raise TimeoutException("OTP confirm button is not available/clickable while completing BMO 2FA") from e
-        self._click("click BMO OTP confirm button", confirm_btn)
+        # human=True: the post-OTP confirm/continue (device-trust registration) is the most
+        # heavily fingerprinted step — give it real pointer movement + dwell, not a bare click.
+        self._click("click BMO OTP confirm button", confirm_btn, human=True)
 
         logger.info("Waiting for CONTINUE button")
         try:
             continue_btn = self._wait_until(
                 "find clickable BMO continue button after OTP",
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_CONTINUE)),
+                clickable(By.XPATH, ConnectionElementId.MFA_CONTINUE),
                 DelaySeconds.TWO_FACTOR_TIMEOUT,
             )
         except TimeoutException as e:
             raise TimeoutException(
                 "Continue button after OTP is not available/clickable while completing BMO 2FA") from e
-        self._click("click BMO continue button after OTP", continue_btn)
+        self._click("click BMO continue button after OTP", continue_btn, human=True)
 
         logger.info("Waiting for post-2FA redirect to %s", BMO_SUCCESS_URL)
         self._wait_until(
             f"complete BMO post-2FA redirect to {BMO_SUCCESS_URL}",
-            EC.url_to_be(BMO_SUCCESS_URL),
+            url_to_be(BMO_SUCCESS_URL),
             DelaySeconds.LOGIN_SUCCESS_TIMEOUT,
             screenshot_name="bmo_post_2fa_redirect_timeout",
         )
@@ -235,8 +244,8 @@ class BMOBank(BankScraper):
         self._navigate("open BMO account details page for web parsing", account_url)
 
         self._wait_until(
-            "load BMO transaction section headers",
-            EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_SECTION_HEADER)),
+            "load BMO transaction rows",
+            present(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE),
             DelaySeconds.PAGE_TIMEOUT,
             screenshot_name="bmo_transactions_load_timeout",
         )
@@ -279,27 +288,25 @@ class BMOBank(BankScraper):
             if next_btn.get_attribute("disabled") is not None:
                 break
 
-            old_row = self._find_element(
-                "find current BMO transaction row before paginating",
-                By.CSS_SELECTOR,
-                ConnectionElementId.TRANSACTION_ROW_INTERACTIVE,
-            )
+            # CDP has no stale-element concept, so detect that the page advanced by watching the
+            # first interactive row's text change instead of waiting on a specific node handle.
+            previous_signature = self._first_row_signature()
             self._click("click BMO pagination next button", next_btn)
 
             try:
                 self._wait_until(
-                    "wait for BMO previous transaction row to become stale after pagination",
-                    EC.staleness_of(old_row),
+                    "wait for BMO transaction rows to change after pagination",
+                    self._rows_changed(previous_signature),
                     DelaySeconds.PAGINATION_WAIT,
                     timeout_log_level=logging.INFO,
                 )
-            except (TimeoutException, StaleElementReferenceException):
-                logger.info("BMO previous-row staleness wait did not complete; checking for new rows anyway")
+            except TimeoutException:
+                logger.info("BMO rows-changed wait did not complete; checking for rows anyway")
 
             try:
                 self._wait_until(
                     "load BMO transaction rows after pagination",
-                    EC.presence_of_element_located((By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)),
+                    present(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE),
                     DelaySeconds.PAGINATION_WAIT,
                 )
             except TimeoutException:
@@ -331,25 +338,55 @@ class BMOBank(BankScraper):
         value = float(number.group().replace(",", ""))
         return sign * value
 
+    def _first_row_signature(self) -> str | None:
+        """Text of the first interactive transaction row, used to detect a page change."""
+        rows = self.driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
+        return rows[0].text if rows else None
+
+    def _rows_changed(self, previous_signature: str | None):
+        def condition(driver) -> bool | None:
+            rows = driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
+            if not rows:
+                return None
+            return True if rows[0].text != previous_signature else None
+
+        return condition
+
     def _parse_posted_transactions_from_page(self) -> list[tuple[datetime, str, float]]:
-        headers = self.driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_SECTION_HEADER)
-        logger.debug("Found %d section headers: %s", len(headers), [h.text[:50] for h in headers])
-        rows = self.driver.find_elements(By.XPATH, ConnectionElementId.TRANSACTION_ROWS)
+        # Extract every row's date/description/amount in one DOM pass. Done in JS (rather than
+        # per-cell element handles) because it is both far faster over CDP and immune to the
+        # stale-handle problems the old Selenium nested-find approach hit during pagination.
+        rows_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_ROWS))
+        date_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_DATE))
+        desc_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_DESC))
+        amount_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_AMOUNT))
+        script = f"""
+        const rows = document.evaluate({rows_xpath}, document, null,
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        const pick = (row, xp) => {{
+            const r = document.evaluate(xp, row, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+            return r.singleNodeValue ? r.singleNodeValue.textContent : null;
+        }};
+        const out = [];
+        for (let i = 0; i < rows.snapshotLength; i++) {{
+            const row = rows.snapshotItem(i);
+            out.push([pick(row, {date_xpath}), pick(row, {desc_xpath}), pick(row, {amount_xpath})]);
+        }}
+        return out;
+        """
+        raw_rows: list[list[str | None]] = self.driver.execute_script(script) or []
 
         transactions = []
-        for row in rows:
-            date_text = row.find_element(By.XPATH, ConnectionElementId.TRANSACTION_DATE).text
-            desc = row.find_element(By.XPATH, ConnectionElementId.TRANSACTION_DESC).text
-            amount_raw = row.find_element(By.XPATH, ConnectionElementId.TRANSACTION_AMOUNT).text
-            amount = self._parse_amount_from_web(amount_raw)
-
+        for date_text, desc, amount_raw in raw_rows:
+            if not date_text:
+                continue
+            amount = self._parse_amount_from_web(amount_raw or "")
             try:
-                txn_date = datetime.strptime(date_text, "%b %d, %Y")
+                txn_date = datetime.strptime(date_text.strip(), "%b %d, %Y")
             except ValueError:
                 logger.warning("Could not parse date: %s — skipping row", date_text)
                 continue
-
-            transactions.append((txn_date, desc, amount))
+            transactions.append((txn_date, desc or "", amount))
 
         return transactions
 
@@ -395,12 +432,18 @@ class BMOBank(BankScraper):
 
     def _dismiss_cookie_banner(self) -> bool:
         try:
-            accept_btn = WebDriverWait(self.driver, DelaySeconds.COOKIE_BANNER_TIMEOUT).until(
-                EC.element_to_be_clickable((By.XPATH, ConnectionElementId.COOKIE_ACCEPT))
+            accept_btn = self._wait_until(
+                "find clickable BMO cookie accept button",
+                clickable(By.XPATH, ConnectionElementId.COOKIE_ACCEPT),
+                DelaySeconds.COOKIE_BANNER_TIMEOUT,
+                timeout_log_level=logging.INFO,
             )
             self._click("dismiss BMO cookie consent banner", accept_btn)
-            WebDriverWait(self.driver, DelaySeconds.COOKIE_BANNER_TIMEOUT).until(
-                EC.invisibility_of_element_located((By.ID, "onetrust-banner-sdk"))
+            self._wait_until(
+                "wait for BMO cookie consent banner to disappear",
+                invisible(By.ID, "onetrust-banner-sdk"),
+                DelaySeconds.COOKIE_BANNER_TIMEOUT,
+                timeout_log_level=logging.INFO,
             )
             logger.info("Cookie consent banner dismissed")
             return True
@@ -449,34 +492,34 @@ class BMOBank(BankScraper):
         logger.info("2FA screen detected — clicking NEXT")
         next_btn = self._wait_until(
             "find clickable BMO 2FA next button",
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON)),
+            clickable(By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON),
             DelaySeconds.MFA_STEP_TIMEOUT,
         )
-        self._click("click BMO 2FA next button", next_btn)
+        self._click("click BMO 2FA next button", next_btn, human=True)
 
         logger.info("Selecting phone radio button")
         radio = self._wait_until(
             "find clickable BMO 2FA phone radio button",
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_PHONE_RADIO)),
+            clickable(By.XPATH, ConnectionElementId.MFA_PHONE_RADIO),
             DelaySeconds.MFA_STEP_TIMEOUT,
         )
-        self._click("select BMO 2FA phone radio button", radio)
+        self._click("select BMO 2FA phone radio button", radio, human=True)
 
         logger.info("Ticking the 'I won't share' checkbox")
         checkbox = self._wait_until(
             "find clickable BMO 2FA agreement checkbox",
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_AGREE_CHECKBOX)),
+            clickable(By.XPATH, ConnectionElementId.MFA_AGREE_CHECKBOX),
             DelaySeconds.MFA_STEP_TIMEOUT,
         )
-        self._click("tick BMO 2FA agreement checkbox", checkbox)
+        self._click("tick BMO 2FA agreement checkbox", checkbox, human=True)
 
         logger.info("Clicking SEND CODE")
         send_btn = self._wait_until(
             "find clickable BMO send-code button",
-            EC.element_to_be_clickable((By.XPATH, ConnectionElementId.MFA_SEND_CODE)),
+            clickable(By.XPATH, ConnectionElementId.MFA_SEND_CODE),
             DelaySeconds.MFA_STEP_TIMEOUT,
         )
-        self._click("click BMO send-code button", send_btn)
+        self._click("click BMO send-code button", send_btn, human=True)
 
     def _capture_cookies(self) -> None:
         account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
