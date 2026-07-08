@@ -27,8 +27,9 @@
 
       <div class="form-block">
         <div class="form-group">
-          <label class="form-label" for="account_uuid">Account UUID</label>
-          <input id="account_uuid" class="input-otp" type="text" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" spellcheck="false" autocomplete="off">
+          <label class="form-label" for="account_uuids">Account UUIDs</label>
+          <textarea id="account_uuids" class="input-otp" rows="3" placeholder="One UUID per line (or comma-separated)&#10;xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" spellcheck="false" autocomplete="off"></textarea>
+          <p class="form-hint">Enter one or more account UUIDs — one per line or separated by commas. Multiple accounts are returned as a ZIP.</p>
         </div>
 
         <div class="form-group">

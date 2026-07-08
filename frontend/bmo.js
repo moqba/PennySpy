@@ -42,26 +42,30 @@ window.addEventListener('beforeunload', (e) => {
 loginBtn.addEventListener('click', async () => {
   if (isLoggingIn || isFetching) return;
 
-  const account_uuid = document.getElementById('account_uuid').value.trim();
+  const account_uuids_raw = document.getElementById('account_uuids').value;
+  const account_uuids = parseAccountUuids(account_uuids_raw);
 
-  if (!account_uuid) {
-    showStatus('error', 'Account UUID is required');
+  if (account_uuids.length === 0) {
+    showStatus('error', 'At least one account UUID is required');
     return;
   }
 
-  setCookie('bmo_account_uuid',   account_uuid);
+  setCookie('bmo_account_uuids',  account_uuids.join('\n'));
   setCookie('bmo_app_type',       document.getElementById('app_type').value);
   setCookie('bmo_statement_date', document.getElementById('statement_date').value);
   setCookie('bmo_from_date',     document.getElementById('from_date').value);
 
   setLoggingIn(true);
-  showStatus('loading', 'Opening BMO login — browser automation is running…');
+  const loginMsg = account_uuids.length > 1
+    ? `Opening BMO login for ${account_uuids.length} accounts — browser automation is running…`
+    : 'Opening BMO login — browser automation is running…';
+  showStatus('loading', loginMsg);
 
   try {
     const res = await fetch(`${BASE}/bmo/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ account_uuid }),
+      body: JSON.stringify({ account_uuids }),
     });
 
     if (!res.ok) {
@@ -158,13 +162,17 @@ fetchBtn.addEventListener('click', async () => {
       throw new Error(err.detail || `HTTP ${res.status}`);
     }
 
+    const accountCount = parseAccountUuids(document.getElementById('account_uuids').value).length;
+    const isMultiAccount = accountCount > 1;
+
     const blob = await res.blob();
-    const ext = APP_TYPE_EXTENSION[app_type] || 'dat';
+    const ext = isMultiAccount ? 'zip' : (APP_TYPE_EXTENSION[app_type] || 'dat');
     const filename = getFilenameFromResponse(res) || `bmo_${app_type}_${today()}.${ext}`;
     triggerDownload(blob, filename);
     showStatus('success', `File downloaded — ${filename}`);
 
-    const isOfx = ['msmoney', 'quicken'].includes(app_type);
+    // The QFX/OFX filter only applies to a single plain-text OFX file, not a multi-account ZIP.
+    const isOfx = ['msmoney', 'quicken'].includes(app_type) && !isMultiAccount;
     if (isOfx) {
       const ofxText = await blob.text();
       QfxFilter.initUI(document.getElementById('qfx-filter-section'), ofxText, filename);
@@ -175,7 +183,7 @@ fetchBtn.addEventListener('click', async () => {
       loginBtn.disabled = false;
       fetchBtn.disabled = false;
       otpInput.disabled = false;
-      const formInputs = document.querySelectorAll('.form-block select, .form-block input');
+      const formInputs = document.querySelectorAll('.form-block select, .form-block input, .form-block textarea');
       formInputs.forEach(el => { el.disabled = false; });
     } else {
       resetFlow();
@@ -199,7 +207,7 @@ otpInput.addEventListener('keydown', (e) => {
 function setLoggingIn(active) {
   isLoggingIn = active;
   loginBtn.disabled = active;
-  const formInputs = document.querySelectorAll('.form-block select, .form-block input');
+  const formInputs = document.querySelectorAll('.form-block select, .form-block input, .form-block textarea');
   formInputs.forEach(el => { el.disabled = active; });
 }
 
@@ -216,7 +224,7 @@ function resetFlow() {
   loginBtn.disabled = false;
   fetchBtn.disabled = false;
   otpInput.disabled = false;
-  const formInputs = document.querySelectorAll('.form-block select, .form-block input');
+  const formInputs = document.querySelectorAll('.form-block select, .form-block input, .form-block textarea');
   formInputs.forEach(el => { el.disabled = false; });
 }
 
@@ -254,6 +262,14 @@ function today() {
   return new Date().toISOString().split('T')[0];
 }
 
+// Split the account-UUID textarea on newlines and/or commas, trimming blanks.
+function parseAccountUuids(raw) {
+  return String(raw || '')
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function escapeHtml(str) {
   return String(str)
     .replace(/&/g, '&amp;')
@@ -264,11 +280,11 @@ function escapeHtml(str) {
 
 // ── Restore saved selections ──────────────────────────────────────
 (function restoreSelections() {
-  const account_uuid   = getCookie('bmo_account_uuid');
+  const account_uuids  = getCookie('bmo_account_uuids') || getCookie('bmo_account_uuid');
   const app_type       = getCookie('bmo_app_type');
   const statement_date = getCookie('bmo_statement_date');
   const from_date     = getCookie('bmo_from_date');
-  if (account_uuid)   document.getElementById('account_uuid').value   = account_uuid;
+  if (account_uuids)  document.getElementById('account_uuids').value  = parseAccountUuids(account_uuids).join('\n');
   if (app_type)       document.getElementById('app_type').value       = app_type;
   if (statement_date) document.getElementById('statement_date').value = statement_date;
   if (from_date)     document.getElementById('from_date').value     = from_date;

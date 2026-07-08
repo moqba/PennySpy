@@ -34,11 +34,15 @@ Initiate a BMO login. Credentials are read from environment variables.
 <a id="**uuid_guide**"></a>
 The account_uuid can be found on the BMO website. When selecting the specific account of interest. the URL would contain the account_uuid as such : `https://www1.bmo.com/banking/digital/account-details/cc/<account_uuid>`
 
+You can target multiple credit card accounts in a single session by passing more than one
+UUID. When more than one account is scraped, `/bmo/scrape` returns a ZIP archive containing one
+transaction file per account (each namespaced under its account UUID).
+
 **Request body (JSON):**
 
-| Name         | Type   | Required | Description                                              |
-|--------------|--------|----------|----------------------------------------------------------|
-| account_uuid | string | yes      | UUID of the BMO credit card account to target            |
+| Name          | Type            | Required | Description                                                                 |
+|---------------|-----------------|----------|-----------------------------------------------------------------------------|
+| account_uuids | array of string | yes      | UUIDs of the BMO credit card accounts to target (a single string is also accepted) |
 
 **Response:**
 
@@ -86,7 +90,9 @@ Retrieve transactions as a downloadable file.
 | statement_date | string | if not `csv_web` | Statement period to export — see [StatementDate](#statementdate)            |
 | from_date      | string | if `csv_web`     | Fetch transactions on or after this date (`YYYY-MM-DD`), web-parsed         |
 
-**Response:** A downloadable file whose name and format depend on the selected `app_type`.
+**Response:** A downloadable file whose name and format depend on the selected `app_type`. When
+multiple `account_uuids` were provided at login, the response is a ZIP archive bundling one file
+per account.
 
 **Error responses:**
 
@@ -129,8 +135,9 @@ from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
 
 bank = BMOBank()
 
-# Replace with your credit card account UUID (visible in the BMO URL when viewing account details)
-bank.start_auth(account_uuid="your-account-uuid-here")
+# Replace with your credit card account UUID(s) (visible in the BMO URL when viewing account details).
+# Pass more than one to scrape several accounts in a single session (returns a ZIP).
+bank.start_auth(account_uuids=["your-account-uuid-here"])
 
 otp = input("Enter OTP code sent to your phone: ")
 bank.continue_auth(otp_code=otp)

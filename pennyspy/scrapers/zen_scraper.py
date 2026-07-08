@@ -113,8 +113,19 @@ def _make_user_data_dir() -> Path:
     """Ephemeral per-session profile, honoring the same env overrides as the Selenium engine."""
     parent = os.environ.get("BROWSER_USER_DATA_DIR") or os.environ.get("CHROME_USER_DATA_DIR")
     if parent:
-        Path(parent).mkdir(parents=True, exist_ok=True)
-        return Path(tempfile.mkdtemp(dir=parent))
+        try:
+            Path(parent).mkdir(parents=True, exist_ok=True)
+            return Path(tempfile.mkdtemp(dir=parent))
+        except OSError as e:
+            # A misconfigured parent (e.g. owned by a different uid under mode 700 in the
+            # container) must not crash login. The profile is ephemeral and rmtree'd on quit,
+            # so the system temp dir is a safe home.
+            logger.warning(
+                "Configured browser user-data parent %r is not usable (%s); "
+                "falling back to the system temp dir.",
+                parent,
+                e,
+            )
     return Path(tempfile.mkdtemp())
 
 

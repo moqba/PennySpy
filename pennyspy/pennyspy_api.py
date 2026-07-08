@@ -15,7 +15,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from pennyspy.logging_setup import setup_logging
 from pennyspy.scrapers.bmo_bank.bmo_bank import BMOBank
@@ -26,7 +26,7 @@ from pennyspy.scrapers.router import create_scraper_router
 from pennyspy.scrapers.scotiabank.scotiabank import ScotiaBank
 from pennyspy.scrapers.session import ScraperSessionManager
 from pennyspy.scrapers.wealthsimple.wealthsimple import Wealthsimple
-from pennyspy.version_check import get_latest_tag_version, is_newer_version
+from pennyspy.version_check import get_latest_tag_version, get_release_notes, is_newer_version
 
 LOG_FILE = setup_logging()
 LOG_DIR = LOG_FILE.parent
@@ -36,7 +36,19 @@ logger = getLogger(__name__)
 
 
 class BmoLoginParams(BaseModel):
-    account_uuid: str
+    account_uuids: list[str]
+
+    @field_validator("account_uuids", mode="before")
+    @classmethod
+    def _coerce_account_uuids(cls, value: object) -> list[str]:
+        # Accept a single string for backward compatibility with older clients.
+        raw = [value] if isinstance(value, str) else value
+        if not isinstance(raw, (list, tuple)):
+            raise ValueError("account_uuids must be a string or a list of strings")
+        cleaned = [str(item).strip() for item in raw if str(item).strip()]
+        if not cleaned:
+            raise ValueError("At least one account UUID is required")
+        return cleaned
 
 
 class BmoScrapeParams(BaseModel):
@@ -202,11 +214,17 @@ def health_check():
 def package_version() -> dict[str, str | bool | None]:
     current_version = _get_package_version()
     latest_version = get_latest_tag_version()
+    update_available = is_newer_version(latest_version, current_version)
+    release_notes = get_release_notes(latest_version) if update_available else None
     return {
         "name": "pennyspy",
         "version": current_version,
         "latest_version": latest_version,
-        "update_available": is_newer_version(latest_version, current_version),
+        "update_available": update_available,
+        "release_name": release_notes["release_name"] if release_notes else None,
+        "release_notes": release_notes["release_notes"] if release_notes else None,
+        "release_url": release_notes["release_url"] if release_notes else None,
+        "release_published_at": release_notes["release_published_at"] if release_notes else None,
     }
 
 
