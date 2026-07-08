@@ -5,6 +5,7 @@ import json
 import logging
 import re
 import secrets
+import zipfile
 from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
@@ -43,15 +44,16 @@ class BMOBank(ZenBankScraper):
     def __init__(self, config: BrowserConfig = BrowserConfig()):
         super().__init__(config=config)
         self.cookies: list[dict] | None = None
-        self._account_uuid: str | None = None
+        self._account_uuids: list[str] = []
         self._user_agent: str = self.driver.execute_script("return navigator.userAgent")
         self._authenticated: bool = False
 
     # ── BankScraper interface ──────────────────────────────────────────
 
     def start_auth(self, **kwargs: Any) -> AuthStep:
-        account_uuid: str = kwargs["account_uuid"]
-        self._account_uuid = account_uuid
+        account_uuids: list[str] = list(kwargs["account_uuids"])
+        assert account_uuids, "At least one account UUID is required"
+        self._account_uuids = account_uuids
         username = get_required_env_var("PENNYSPY_BMOU")
         password = get_required_env_var("PENNYSPY_BMOPP")
 
@@ -80,22 +82,60 @@ class BMOBank(ZenBankScraper):
         return AuthStep(status="authenticated")
 
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
+        assert self._account_uuids, "No account UUIDs available for this session"
         app_type: AppType = kwargs["app_type"]
-        if kwargs.get("from_date") is not None:
-            # Web scraping path — uses the live browser, no cookies needed
-            return self._parse_transactions_from_web(
-                from_date=kwargs["from_date"],
-                export_directory=export_directory,
-            )
-        # API path — capture cookies if not already done (no-2FA path captures early)
-        if self.cookies is None:
-            self._capture_cookies()
-        statement_date: StatementDate = kwargs["statement_date"]
-        return self._download_transactions_via_api(
-            app_type=app_type,
-            statement_date=statement_date,
-            export_directory=export_directory,
-        )
+        from_date = kwargs.get("from_date")
+        statement_date: StatementDate | None = kwargs.get("statement_date")
+
+        export_directory = Path(export_directory)
+        export_directory.mkdir(parents=True, exist_ok=True)
+
+        single_account = len(self._account_uuids) == 1
+
+        results: list[tuple[str, Path]] = []
+        for account_uuid in self._account_uuids:
+            logger.info("Downloading transactions for account %s", account_uuid)
+            # Give each account its own directory so identically-named default
+            # download files don't overwrite one another before bundling. A single
+            # account writes straight to export_directory to preserve the old path.
+            account_dir = export_directory if single_account else export_directory / account_uuid
+            if from_date is not None:
+                # Web scraping path — uses the live browser, no cookies needed
+                file_path = self._parse_transactions_from_web(
+                    account_uuid=account_uuid,
+                    from_date=from_date,
+                    export_directory=account_dir,
+                )
+            else:
+                # API path — capture cookies once (shared across accounts in the session)
+                if self.cookies is None:
+                    self._capture_cookies(account_uuid)
+                assert statement_date is not None, "statement_date is required for the API download path"
+                file_path = self._download_transactions_via_api(
+                    account_uuid=account_uuid,
+                    app_type=app_type,
+                    statement_date=statement_date,
+                    export_directory=account_dir,
+                )
+            results.append((account_uuid, file_path))
+
+        if len(results) == 1:
+            return results[0][1]
+        return self._bundle_files(results, export_directory)
+
+    def _bundle_files(self, results: list[tuple[str, Path]], export_directory: Path) -> Path:
+        """Bundle multiple per-account transaction files into a single ZIP archive.
+
+        Each file is namespaced under its account UUID so downloads with identical
+        default filenames don't collide inside the archive.
+        """
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        zip_path = export_directory / f"bmo_transactions_{today_str}.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for account_uuid, file_path in results:
+                archive.write(file_path, arcname=f"{account_uuid}/{file_path.name}")
+        logger.info("Bundled %d account files into %s", len(results), zip_path)
+        return zip_path
 
     # ── Internal implementation ────────────────────────────────────────
 
@@ -146,12 +186,12 @@ class BMOBank(ZenBankScraper):
 
     def _download_transactions_via_api(
             self,
+            account_uuid: str,
             app_type: AppType,
             statement_date: StatementDate,
             export_directory: Path | str,
     ) -> Path:
         assert self.cookies is not None, "Cookies have not been captured yet."
-        assert self._account_uuid is not None
 
         export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
@@ -175,11 +215,11 @@ class BMOBank(ZenBankScraper):
             "X-XSRF-TOKEN": xsrf_token,
             "X-UI-Session-ID": "0.0.1",
             "X-App-Version": "session-id",
-            "X-App-Current-Path": f"/banking/digital/account-details/cc/{self._account_uuid}",
+            "X-App-Current-Path": f"/banking/digital/account-details/cc/{account_uuid}",
             "X-Request-ID": request_id,
             "X-Original-Request-Time": now_time.strftime("%a, %d %b %Y %H:%M:%S GMT"),
             "Referer": (
-                f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}?modal=transactions"
+                f"https://www1.bmo.com/banking/digital/account-details/cc/{account_uuid}?modal=transactions"
             ),
         }
 
@@ -233,13 +273,13 @@ class BMOBank(ZenBankScraper):
 
     def _parse_transactions_from_web(
             self,
+            account_uuid: str,
             from_date: datetime,
             export_directory: Path,
     ) -> Path:
-        assert self._account_uuid is not None
         export_directory.mkdir(parents=True, exist_ok=True)
 
-        account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
+        account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{account_uuid}"
         logger.info("Navigating to account details page for web parsing")
         self._navigate("open BMO account details page for web parsing", account_url)
 
@@ -521,8 +561,8 @@ class BMOBank(ZenBankScraper):
         )
         self._click("click BMO send-code button", send_btn, human=True)
 
-    def _capture_cookies(self) -> None:
-        account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{self._account_uuid}"
+    def _capture_cookies(self, account_uuid: str) -> None:
+        account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{account_uuid}"
         logger.info("Navigating to account page to prime XSRF-TOKEN cookie")
         self._navigate("open BMO account page to prime XSRF token cookie", account_url)
         sleep(DelaySeconds.ACCOUNT_NAV_WAIT)

@@ -56,7 +56,7 @@ COPY docker/supervisor/pennyspy.conf /etc/supervisor/conf.d/pennyspy.conf
 RUN awk '/\[program:selenium-standalone\]/{exit} {print}' /etc/supervisor/conf.d/selenium.conf > /tmp/selenium.conf \
     && mv /tmp/selenium.conf /etc/supervisor/conf.d/selenium.conf \
     && mkdir -p "${CHROME_USER_DATA_DIR}" /app/data/logs /app/data/screenshots \
-    && chown -R 1200:1201 "${CHROME_USER_DATA_DIR}" /app/data \
+    && chown -R seluser:seluser "${CHROME_USER_DATA_DIR}" /app/data \
     && chmod 700 "${CHROME_USER_DATA_DIR}"
 
 EXPOSE 5056 7900
@@ -67,5 +67,7 @@ port=os.environ.get('PENNYSPY_PORT','5056'); \
 sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/docs', timeout=3).status==200 else 1)"
 
 # Back to the unprivileged selenium user; the base CMD (/opt/bin/entry_point.sh -> supervisord)
-# is preserved so the display stack and the app start together.
-USER 1200
+# is preserved so the display stack and the app start together. Referencing the account by name
+# (rather than a hardcoded uid) keeps ownership aligned with whatever uid/gid the base image
+# assigns seluser, so the per-session Chrome user-data dir stays writable.
+USER seluser

@@ -9,6 +9,7 @@ _DOCKER_DATA_DIR = pathlib.Path("/app/data")
 _DOCKER_LOG_DIR = _DOCKER_DATA_DIR / "logs"
 
 _configured = False
+_configured_log_file: pathlib.Path | None = None
 
 
 def _repo_checkout_log_dir() -> pathlib.Path | None:
@@ -49,23 +50,47 @@ def _ensure_log_dir(preferred: pathlib.Path) -> pathlib.Path:
         return fallback
 
 
-def setup_logging(level: int = logging.INFO) -> pathlib.Path:
-    global _configured
-    log_dir = _ensure_log_dir(_resolve_log_dir())
+def _create_file_handler(log_dir: pathlib.Path, level: int) -> tuple[logging.Handler, pathlib.Path]:
     log_file = log_dir / "pennyspy.log"
+    try:
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=5_000_000,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setLevel(level)
+        return handler, log_file
+    except PermissionError as exc:
+        fallback = _ensure_log_dir(_home_log_dir())
+        fallback_log_file = fallback / "pennyspy.log"
+        print(
+            f"pennyspy: cannot write logs to {log_file} ({exc}); "
+            f"falling back to {fallback_log_file}",
+            file=sys.stderr,
+        )
+        handler = RotatingFileHandler(
+            fallback_log_file,
+            maxBytes=5_000_000,
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setLevel(level)
+        return handler, fallback_log_file
+
+
+def setup_logging(level: int = logging.INFO) -> pathlib.Path:
+    global _configured, _configured_log_file
+    log_dir = _ensure_log_dir(_resolve_log_dir())
     if _configured:
-        return log_file
+        if _configured_log_file is not None:
+            return _configured_log_file
+        return log_dir / "pennyspy.log"
 
     formatter = logging.Formatter(_LOG_FORMAT)
 
-    file_handler = RotatingFileHandler(
-        log_file,
-        maxBytes=5_000_000,
-        backupCount=3,
-        encoding="utf-8",
-    )
+    file_handler, log_file = _create_file_handler(log_dir, level)
     file_handler.setFormatter(formatter)
-    file_handler.setLevel(level)
 
     stream_handler = logging.StreamHandler()
     stream_handler.setFormatter(formatter)
@@ -79,4 +104,5 @@ def setup_logging(level: int = logging.INFO) -> pathlib.Path:
     root.addHandler(stream_handler)
 
     _configured = True
+    _configured_log_file = log_file
     return log_file

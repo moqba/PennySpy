@@ -3,6 +3,24 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.6.3] - 2026-07-08
+
+### Added
+
+- BMO can now scrape multiple credit card accounts in a single session: pass a list of
+  `account_uuids` to `/bmo/login` (a single string is still accepted). When more than one account
+  is scraped, `/bmo/scrape` returns a ZIP archive with one transaction file per account, each
+  namespaced under its account UUID. The BMO page exposes a multi-line UUID field for this.
+
+## [0.6.2] - 2026-07-08
+
+### Fixed
+
+- Browser sessions no longer crash on login with `PermissionError` when the container's
+  Chrome user-data directory is owned by a different account: the Dockerfile now assigns
+  it to the base image's `seluser` by name, and the scraper falls back to the system temp
+  directory if the configured parent is unwritable.
+
 ## [0.6.1] - 2026-07-02
 
 ### Changed

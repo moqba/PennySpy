@@ -8,10 +8,12 @@ import requests
 logger = getLogger(__name__)
 
 GITHUB_TAGS_URL: Final[str] = "https://api.github.com/repos/moqba/PennySpy/tags"
+GITHUB_RELEASE_BY_TAG_URL: Final[str] = "https://api.github.com/repos/moqba/PennySpy/releases/tags/{tag}"
 LATEST_VERSION_CACHE_TTL_SECONDS: Final[int] = 60 * 60
 
 _latest_version_cache_expires_at = 0.0
 _latest_version_cache_value: str | None = None
+_release_notes_cache: dict[str, tuple[float, dict[str, str | None] | None]] = {}
 
 
 def version_sort_key(raw_version: str) -> tuple[int, ...]:
@@ -64,3 +66,41 @@ def get_latest_tag_version() -> str | None:
     _latest_version_cache_expires_at = now + LATEST_VERSION_CACHE_TTL_SECONDS
     _latest_version_cache_value = latest_version
     return latest_version
+
+
+def get_release_notes(version: str | None) -> dict[str, str | None] | None:
+    if version is None:
+        return None
+
+    normalized_version = version.strip().lstrip("vV")
+    if not normalized_version:
+        return None
+
+    now = time.monotonic()
+    cached = _release_notes_cache.get(normalized_version)
+    if cached is not None and now < cached[0]:
+        return cached[1]
+
+    tag = f"v{normalized_version}"
+    try:
+        response = requests.get(GITHUB_RELEASE_BY_TAG_URL.format(tag=tag), timeout=5)
+        response.raise_for_status()
+        release = response.json()
+    except (requests.RequestException, ValueError):
+        logger.exception("Failed to fetch PennySpy release notes for %s from GitHub", tag)
+        _release_notes_cache[normalized_version] = (now + 300, None)
+        return None
+
+    if not isinstance(release, dict):
+        logger.warning("Unexpected PennySpy release response for %s: %r", tag, release)
+        _release_notes_cache[normalized_version] = (now + 300, None)
+        return None
+
+    release_notes = {
+        "release_name": release.get("name") if isinstance(release.get("name"), str) else None,
+        "release_notes": release.get("body") if isinstance(release.get("body"), str) else None,
+        "release_url": release.get("html_url") if isinstance(release.get("html_url"), str) else None,
+        "release_published_at": release.get("published_at") if isinstance(release.get("published_at"), str) else None,
+    }
+    _release_notes_cache[normalized_version] = (now + LATEST_VERSION_CACHE_TTL_SECONDS, release_notes)
+    return release_notes
