@@ -3,6 +3,16 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.6.4] - 2026-07-17
+
+### Fixed
+
+- Wealthsimple credit-card transactions no longer go missing from the scrape. The activity
+  feed moved its day-date headers from `<h2>` to `<h3>`, so every row lost its date and
+  credit-card purchases — which carry no date inside their own detail region — were silently
+  dropped. The scraper now reads the `<h3>` headers (including the relative "Today"/"Yesterday"
+  labels) and threads each row's day-header date through as a fallback `Date`.
+
 ## [0.6.3] - 2026-07-08
 
 ### Added

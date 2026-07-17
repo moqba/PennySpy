@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
 
@@ -52,6 +52,28 @@ WEALTHSIMPLE_ACTIVITY: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/activity"
 logger = logging.getLogger(__name__)
 
 
+def _parse_header_date(text: str | None) -> datetime | None:
+    """Parse a Wealthsimple activity day-header into a datetime.
+
+    Headers are either absolute (``"July 15, 2026"``) or relative
+    (``"Today"`` / ``"Yesterday"``). Anything else (e.g. a section label like
+    "Scheduled activities") returns None so the row is treated as undated."""
+    if not text:
+        return None
+    text = text.strip()
+    lowered = text.lower()
+    if lowered == "today":
+        today = datetime.now()
+        return datetime(today.year, today.month, today.day)
+    if lowered == "yesterday":
+        yesterday = datetime.now() - timedelta(days=1)
+        return datetime(yesterday.year, yesterday.month, yesterday.day)
+    try:
+        return datetime.strptime(text, "%B %d, %Y")
+    except ValueError:
+        return None
+
+
 def parse_button_texts(button_inner_html: str) -> list[str]:
     """Extract non-empty button-header text values in document order.
 
@@ -88,13 +110,21 @@ def parse_region_html(region_inner_html: str) -> dict:
     return activity
 
 
-def build_activity_row(button_inner_html: str, region_inner_html: str) -> dict | None:
+def build_activity_row(
+    button_inner_html: str, region_inner_html: str, header_date: datetime | None = None
+) -> dict | None:
     """Full per-transaction parse: region fields + button-header enrichment, with Cancelled-skip.
+
+    ``header_date`` is the transaction's day-header date (from the activity feed's
+    ``<h3>`` grouping). It's used as a fallback for the ``Date`` field, which some
+    transaction types (e.g. credit-card purchases) omit from their expanded region.
 
     Returns None if the row should be dropped (Cancelled status)."""
     activity = parse_region_html(region_inner_html)
     if activity.get(ActivityField.STATUS.value) == "Cancelled":
         return None
+    if not activity.get(ActivityField.DATE.value) and header_date is not None:
+        activity[ActivityField.DATE.value] = header_date.strftime("%B %d, %Y")
     meta = _parse_button_header(parse_button_texts(button_inner_html))
     if meta.get("ticker") and not activity.get(ActivityField.TICKER.value):
         activity[ActivityField.TICKER.value] = meta["ticker"]
@@ -259,10 +289,7 @@ class Wealthsimple(ZenBankScraper):
         headers = self.driver.find_elements(By.XPATH, ActivityXpath.DATE_HEADER)
         if not headers:
             return None
-        try:
-            return datetime.strptime(headers[-1].text.strip(), "%B %d, %Y")
-        except ValueError:
-            return None
+        return _parse_header_date(headers[-1].text)
 
     def _count_header_buttons(self) -> int:
         count = self.driver.execute_script(
@@ -294,11 +321,11 @@ class Wealthsimple(ZenBankScraper):
         (unparseable or no header seen yet) means the row is treated as in range."""
         raw: list[list] = self.driver.execute_script(
             "const nodes = document.querySelectorAll("
-            f"'h2[data-fs-privacy-rule=\"unmask\"], {ActivityCss.HEADER_BUTTON}');\n"
+            f"'h3[data-fs-privacy-rule=\"unmask\"], {ActivityCss.HEADER_BUTTON}');\n"
             "const out = [];\n"
             "let currentDate = null;\n"
             "for (const node of nodes) {\n"
-            "  if (node.tagName === 'H2') { currentDate = node.textContent.trim(); continue; }\n"
+            "  if (node.tagName === 'H3') { currentDate = node.textContent.trim(); continue; }\n"
             "  out.push([node.getAttribute('aria-controls'),\n"
             "            node.getAttribute('aria-expanded') === 'true', currentDate]);\n"
             "}\n"
@@ -308,13 +335,7 @@ class Wealthsimple(ZenBankScraper):
         for region_id, expanded, date_text in raw:
             if not region_id:
                 continue
-            row_date: datetime | None = None
-            if date_text:
-                try:
-                    row_date = datetime.strptime(date_text, "%B %d, %Y")
-                except ValueError:
-                    pass
-            rows.append((region_id, bool(expanded), row_date))
+            rows.append((region_id, bool(expanded), _parse_header_date(date_text)))
         return rows
 
     def _expand_rows(self, rows: list[tuple[str, bool, datetime | None]], since_date: datetime | None) -> list[str]:
@@ -378,14 +399,16 @@ class Wealthsimple(ZenBankScraper):
         if since_date:
             self._load_more_until(since_date)
 
-        region_ids = self._expand_rows(self._snapshot_rows(), since_date)
+        snapshot = self._snapshot_rows()
+        date_by_region = {region_id: row_date for region_id, _, row_date in snapshot}
+        region_ids = self._expand_rows(snapshot, since_date)
 
         rows: list[dict] = []
         for region_id, button_html, region_html in self._harvest_rows(region_ids):
             if not button_html or not region_html:
                 logger.warning("Missing HTML for Wealthsimple activity region %s — skipping", region_id)
                 continue
-            activity = build_activity_row(button_html, region_html)
+            activity = build_activity_row(button_html, region_html, header_date=date_by_region.get(region_id))
             if activity:
                 rows.append(activity)
 
