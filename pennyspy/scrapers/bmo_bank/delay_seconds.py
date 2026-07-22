@@ -11,3 +11,4 @@ class DelaySeconds(IntEnum):
     TWO_FACTOR_TIMEOUT = 5 * 60  # 300s — user has 5 min to receive + enter OTP
     MFA_STEP_TIMEOUT = 15  # per-step wait for each 2FA UI element
     PAGINATION_WAIT = 10
+    ACCOUNT_SHELL_TIMEOUT = 30  # wait for the account-details side nav when resolving a UUID

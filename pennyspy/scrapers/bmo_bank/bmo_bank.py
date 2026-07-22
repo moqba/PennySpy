@@ -10,7 +10,7 @@ from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
 from time import sleep
-from typing import Any, Final, Literal
+from typing import Any, Final, Literal, cast
 
 import requests
 
@@ -36,6 +36,20 @@ from pennyspy.scrapers.zen_scraper import (
 BMO_LOGIN_URL: Final[str] = "https://www1.bmo.com/banking/digital/login"
 BMO_SUCCESS_URL: Final[str] = "https://www1.bmo.com/banking/digital/accounts"
 BMO_DOWNLOAD_URL: Final[str] = "https://www1.bmo.com/banking/services/accountdetails/downloadCCTransactions"
+BMO_ACCOUNT_DETAILS_BASE: Final[str] = "https://www1.bmo.com/banking/digital/account-details"
+
+# The transaction table header labels that carry an amount, in the order we prefer to read them.
+# Bank accounts split the amount across "Money out"/"Money in"; credit cards use a single
+# "Money in/out" column. We take the first non-empty amount cell across whichever are present.
+_AMOUNT_HEADERS: Final[frozenset[str]] = frozenset({"Money in/out", "Money out", "Money in"})
+# "1-20 of 126" style pagination range label.
+_RANGE_LABEL_RE: Final[re.Pattern[str]] = re.compile(r"(\d[\d,]*)\s*-\s*(\d[\d,]*)\s+of\s+(\d[\d,]*)")
+# Trailing UUID of an /account-details/{ba,cc}/{uuid} href.
+_ACCOUNT_HREF_RE: Final[re.Pattern[str]] = re.compile(
+    r"/account-details/(?:ba|cc)/([0-9a-fA-F-]+)"
+)
+# Hard cap on pagination so a pager that stops advancing can never spin the request forever.
+_MAX_PAGINATION_PAGES: Final[int] = 60
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +59,11 @@ class BMOBank(ZenBankScraper):
         super().__init__(config=config)
         self.cookies: list[dict] | None = None
         self._account_uuids: list[str] = []
+        # UUID -> full /account-details/{ba,cc}/{uuid} URL, and UUID -> display name. Both are
+        # populated from the side nav the first time any account is resolved, so a multi-account
+        # session probes at most once regardless of account type ordering.
+        self._account_urls: dict[str, str] = {}
+        self._account_names: dict[str, str] = {}
         self._user_agent: str = self.driver.execute_script("return navigator.userAgent")
         self._authenticated: bool = False
 
@@ -107,7 +126,16 @@ class BMOBank(ZenBankScraper):
                     export_directory=account_dir,
                 )
             else:
-                # API path — capture cookies once (shared across accounts in the session)
+                # API path — downloadCCTransactions is credit-card-only, so reject bank accounts
+                # up front with a clear message instead of letting the API return an opaque error.
+                account_url = self._resolve_account_url(account_uuid)
+                if "/account-details/ba/" in account_url:
+                    raise ValueError(
+                        f"BMO account {account_uuid} ({self._account_names.get(account_uuid, 'bank account')}) "
+                        "is a bank account; the CSV/QFX download (statement_date) path supports credit cards "
+                        "only. Use the web-parsing path (from_date) for bank accounts."
+                    )
+                # capture cookies once (shared across accounts in the session)
                 if self.cookies is None:
                     self._capture_cookies(account_uuid)
                 assert statement_date is not None, "statement_date is required for the API download path"
@@ -279,7 +307,7 @@ class BMOBank(ZenBankScraper):
     ) -> Path:
         export_directory.mkdir(parents=True, exist_ok=True)
 
-        account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{account_uuid}"
+        account_url = self._resolve_account_url(account_uuid)
         logger.info("Navigating to account details page for web parsing")
         self._navigate("open BMO account details page for web parsing", account_url)
 
@@ -289,11 +317,12 @@ class BMOBank(ZenBankScraper):
             DelaySeconds.PAGE_TIMEOUT,
             screenshot_name="bmo_transactions_load_timeout",
         )
+        self._set_max_rows_per_page()
 
         all_transactions: list[tuple[datetime, str, float]] = []
         reached_date_limit = False
 
-        while True:
+        for page_index in range(1, _MAX_PAGINATION_PAGES + 1):
             try:
                 page_transactions = self._parse_posted_transactions_from_page()
             except StaleElementReferenceException:
@@ -305,14 +334,21 @@ class BMOBank(ZenBankScraper):
                     continue
                 all_transactions.append((txn_date, desc, amount))
 
-            logger.debug(
-                "Page parsed: %d txns on page, %d kept total, reached_date_limit=%s",
+            page_range = self._read_range_label()
+            logger.info(
+                "BMO page %d (%s): %d txns on page, %d kept total, reached_date_limit=%s",
+                page_index,
+                self._format_range(page_range),
                 len(page_transactions),
                 len(all_transactions),
                 reached_date_limit,
             )
 
             if reached_date_limit:
+                break
+            # The range label ("end of total") is the authoritative end-of-data signal; fall back
+            # to the disabled/absent Next button below when it can't be read.
+            if page_range is not None and page_range[1] >= page_range[2]:
                 break
 
             try:
@@ -328,30 +364,18 @@ class BMOBank(ZenBankScraper):
             if next_btn.get_attribute("disabled") is not None:
                 break
 
-            # CDP has no stale-element concept, so detect that the page advanced by watching the
-            # first interactive row's text change instead of waiting on a specific node handle.
-            previous_signature = self._first_row_signature()
             self._click("click BMO pagination next button", next_btn)
-
-            try:
-                self._wait_until(
-                    "wait for BMO transaction rows to change after pagination",
-                    self._rows_changed(previous_signature),
-                    DelaySeconds.PAGINATION_WAIT,
-                    timeout_log_level=logging.INFO,
+            if not self._wait_for_page_advance(page_range):
+                # The Next click did not advance the pager: refuse to loop on a stale page.
+                raise TimeoutException(
+                    f"BMO pagination stalled on page {page_index} "
+                    f"({self._format_range(page_range)}) — Next did not advance the table"
                 )
-            except TimeoutException:
-                logger.info("BMO rows-changed wait did not complete; checking for rows anyway")
-
-            try:
-                self._wait_until(
-                    "load BMO transaction rows after pagination",
-                    present(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE),
-                    DelaySeconds.PAGINATION_WAIT,
-                )
-            except TimeoutException:
-                logger.warning("Pagination wait timed out — stopping")
-                break
+        else:
+            raise TimeoutException(
+                f"BMO pagination exceeded the {_MAX_PAGINATION_PAGES}-page cap "
+                "without reaching the end of the transaction list"
+            )
 
         if not all_transactions:
             raise ValueError("No transactions were found for the selected date range.")
@@ -369,66 +393,172 @@ class BMOBank(ZenBankScraper):
         logger.info("Web-parsed transactions saved: %s (%d rows)", file_path, len(all_transactions))
         return file_path
 
-    def _parse_amount_from_web(self, text: str) -> float:
+    def _parse_amount_from_web(self, text: str, *, date_text: str = "", description: str = "") -> float:
         cleaned = text.replace("\n", "").strip()
         sign = -1 if "-" in cleaned else 1
         number = re.search(r"[\d,.]+", cleaned)
         if not number:
-            raise ValueError(f"Invalid amount: {text}")
+            raise ValueError(
+                f"Invalid amount {text!r} for transaction on {date_text!r} ({description!r})"
+            )
         value = float(number.group().replace(",", ""))
         return sign * value
 
-    def _first_row_signature(self) -> str | None:
-        """Text of the first interactive transaction row, used to detect a page change."""
-        rows = self.driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
-        return rows[0].text if rows else None
+    def _extract_table_from_page(self) -> dict[str, Any] | None:
+        """Read the active tab's transaction table (headers + per-row cell text) in one DOM pass.
 
-    def _rows_changed(self, previous_signature: str | None):
-        def condition(driver) -> bool | None:
-            rows = driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
-            if not rows:
-                return None
-            return True if rows[0].text != previous_signature else None
-
-        return condition
+        Done in JS (rather than per-cell element handles) because it is both far faster over CDP
+        and immune to the stale-handle problems the old Selenium nested-find approach hit during
+        pagination. Everything is scoped to the visible tab panel so a hidden, still-mounted
+        account page can't contribute rows.
+        """
+        scope = json.dumps(str(ConnectionElementId.ACTIVE_TAB_PANEL))
+        rows_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_ROWS))
+        headers_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_HEADERS))
+        script = f"""
+        const root = document.querySelector({scope});
+        if (!root) return null;
+        const text = (node) => ((node ? node.textContent : '') || '').trim();
+        const headerNodes = document.evaluate({headers_xpath}, root, null,
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        const headers = [];
+        for (let i = 0; i < headerNodes.snapshotLength; i++) {{
+            headers.push(text(headerNodes.snapshotItem(i)));
+        }}
+        const rowNodes = document.evaluate({rows_xpath}, root, null,
+            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
+        const rows = [];
+        for (let i = 0; i < rowNodes.snapshotLength; i++) {{
+            const tr = rowNodes.snapshotItem(i);
+            if (!tr.classList.contains('table-row-interactive')) continue;
+            const cells = [];
+            for (const td of tr.querySelectorAll(':scope > td')) {{
+                // The outer ``v-align-middle`` span carries the display value (with its sign for
+                // amounts); description cells have no such span, so fall back to the first span.
+                const value = td.querySelector('span.v-align-middle') || td.querySelector('span');
+                cells.push(text(value || td));
+            }}
+            rows.push(cells);
+        }}
+        return {{headers, rows}};
+        """
+        return cast("dict[str, Any] | None", self.driver.execute_script(script))
 
     def _parse_posted_transactions_from_page(self) -> list[tuple[datetime, str, float]]:
-        # Extract every row's date/description/amount in one DOM pass. Done in JS (rather than
-        # per-cell element handles) because it is both far faster over CDP and immune to the
-        # stale-handle problems the old Selenium nested-find approach hit during pagination.
-        rows_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_ROWS))
-        date_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_DATE))
-        desc_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_DESC))
-        amount_xpath = json.dumps(str(ConnectionElementId.TRANSACTION_AMOUNT))
-        script = f"""
-        const rows = document.evaluate({rows_xpath}, document, null,
-            XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
-        const pick = (row, xp) => {{
-            const r = document.evaluate(xp, row, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
-            return r.singleNodeValue ? r.singleNodeValue.textContent : null;
-        }};
-        const out = [];
-        for (let i = 0; i < rows.snapshotLength; i++) {{
-            const row = rows.snapshotItem(i);
-            out.push([pick(row, {date_xpath}), pick(row, {desc_xpath}), pick(row, {amount_xpath})]);
-        }}
-        return out;
-        """
-        raw_rows: list[list[str | None]] = self.driver.execute_script(script) or []
+        table = self._extract_table_from_page()
+        if not table:
+            return []
+        headers: list[str] = table.get("headers") or []
+        raw_rows: list[list[str]] = table.get("rows") or []
+
+        # Column layout differs by account type (credit card: Transaction date | Description |
+        # Money in/out; bank: Date | Description | Money out | Money in | Balance), so map columns
+        # from the header row rather than hardcoding indices.
+        date_idx = next((i for i, h in enumerate(headers) if "date" in h.lower()), 0)
+        desc_idx = next((i for i, h in enumerate(headers) if h.strip().lower() == "description"), 1)
+        amount_idxs = [i for i, h in enumerate(headers) if h.strip() in _AMOUNT_HEADERS] or [2]
 
         transactions = []
-        for date_text, desc, amount_raw in raw_rows:
+        for cells in raw_rows:
+            if date_idx >= len(cells):
+                continue
+            date_text = cells[date_idx]
             if not date_text:
                 continue
-            amount = self._parse_amount_from_web(amount_raw or "")
+            desc = cells[desc_idx] if desc_idx < len(cells) else ""
+            amount_text = next(
+                (cells[i] for i in amount_idxs if i < len(cells) and cells[i].strip()), ""
+            )
             try:
                 txn_date = datetime.strptime(date_text.strip(), "%b %d, %Y")
             except ValueError:
                 logger.warning("Could not parse date: %s — skipping row", date_text)
                 continue
-            transactions.append((txn_date, desc or "", amount))
+            amount = self._parse_amount_from_web(amount_text, date_text=date_text, description=desc)
+            transactions.append((txn_date, desc, amount))
 
         return transactions
+
+    # ── pagination helpers ─────────────────────────────────────────────
+
+    def _read_range_label(self) -> tuple[int, int, int] | None:
+        """Parse the "1-20 of 126" pagination label into ``(start, end, total)`` ints."""
+        elements = self.driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.PAGINATION_RANGE_LABEL)
+        if not elements:
+            return None
+        match = _RANGE_LABEL_RE.search(elements[0].text)
+        if not match:
+            return None
+        return cast(
+            "tuple[int, int, int]",
+            tuple(int(group.replace(",", "")) for group in match.groups()),
+        )
+
+    @staticmethod
+    def _format_range(page_range: tuple[int, int, int] | None) -> str:
+        if page_range is None:
+            return "range unknown"
+        start, end, total = page_range
+        return f"{start}-{end} of {total}"
+
+    def _set_max_rows_per_page(self) -> None:
+        """Best-effort: switch the page-size selector to its largest option so fewer pages are
+        walked (e.g. 126 rows becomes 2 pages at 100 instead of 7 at 20). Never fatal."""
+        select = json.dumps(str(ConnectionElementId.ROWS_PER_PAGE_SELECT))
+        script = f"""
+        const sel = document.querySelector({select});
+        if (!sel) return null;
+        const values = Array.from(sel.options).map(o => parseInt(o.value, 10)).filter(n => !isNaN(n));
+        if (!values.length) return null;
+        const max = Math.max(...values);
+        if (String(sel.value) === String(max)) return max;
+        sel.value = String(max);
+        sel.dispatchEvent(new Event('change', {{bubbles: true}}));
+        return max;
+        """
+        before = self._read_range_label()
+        try:
+            chosen = self.driver.execute_script(script)
+        except Exception as e:  # pragma: no cover - defensive; the parse still works at 20/page
+            logger.warning("Could not set BMO rows-per-page: %s", e)
+            return
+        if not chosen:
+            return
+        logger.info("Set BMO rows-per-page to %s", chosen)
+        # Give the table time to reflow to the larger window before parsing page 1.
+        try:
+            self._wait_until(
+                "apply BMO rows-per-page change",
+                lambda _driver: True if self._read_range_label() not in (None, before) else None,
+                DelaySeconds.PAGINATION_WAIT,
+                timeout_log_level=logging.INFO,
+            )
+        except TimeoutException:
+            logger.info("BMO rows-per-page reflow not observed; proceeding at current page size")
+
+    def _wait_for_page_advance(self, previous_range: tuple[int, int, int] | None) -> bool:
+        """Wait until the pager moves to a new range (and rows are present) after a Next click."""
+
+        def advanced(driver) -> bool | None:
+            current = self._read_range_label()
+            if current is None:
+                return None
+            if previous_range is not None and current == previous_range:
+                return None
+            rows = driver.find_elements(By.CSS_SELECTOR, ConnectionElementId.TRANSACTION_ROW_INTERACTIVE)
+            return True if rows else None
+
+        try:
+            self._wait_until(
+                "wait for BMO transaction page to advance after pagination",
+                advanced,
+                DelaySeconds.PAGINATION_WAIT,
+                screenshot_name="bmo_pagination_stall",
+                timeout_log_level=logging.INFO,
+            )
+            return True
+        except TimeoutException:
+            return False
 
     def _login(self, username: SecretString, password: SecretString) -> None:
         is_cookie_banner_already_dismissed = self._dismiss_cookie_banner()
@@ -562,13 +692,73 @@ class BMOBank(ZenBankScraper):
         self._click("click BMO send-code button", send_btn, human=True)
 
     def _capture_cookies(self, account_uuid: str) -> None:
-        account_url = f"https://www1.bmo.com/banking/digital/account-details/cc/{account_uuid}"
+        account_url = self._resolve_account_url(account_uuid)
         logger.info("Navigating to account page to prime XSRF-TOKEN cookie")
         self._navigate("open BMO account page to prime XSRF token cookie", account_url)
         sleep(DelaySeconds.ACCOUNT_NAV_WAIT)
 
         self.cookies = self.driver.get_cookies()
         logger.info("Session cookies captured (%d cookies)", len(self.cookies))
+
+    # ── account routing ────────────────────────────────────────────────
+
+    def _resolve_account_url(self, account_uuid: str) -> str:
+        """Resolve a UUID to its real /account-details/{ba,cc}/{uuid} URL.
+
+        BMO routes bank accounts (``/ba/``) and credit cards (``/cc/``) to different paths, so the
+        prefix cannot be assumed. The side nav on any account-details page lists every account with
+        its correct href, so one loaded page maps them all; the result is cached, meaning a
+        multi-account session probes at most once regardless of ordering.
+        """
+        if account_uuid in self._account_urls:
+            return self._account_urls[account_uuid]
+
+        for prefix in ("cc", "ba"):
+            probe_url = f"{BMO_ACCOUNT_DETAILS_BASE}/{prefix}/{account_uuid}"
+            self._navigate(f"probe BMO account page ({prefix}) to read the side nav", probe_url)
+            try:
+                self._wait_until(
+                    "load BMO side navigation",
+                    present(By.CSS_SELECTOR, ConnectionElementId.SIDE_NAV_LINK),
+                    DelaySeconds.ACCOUNT_SHELL_TIMEOUT,
+                    timeout_log_level=logging.INFO,
+                )
+            except TimeoutException:
+                logger.info("BMO side nav did not load for %s probe; trying next prefix", prefix)
+                continue
+            self._read_side_nav_map()
+            if account_uuid in self._account_urls:
+                break
+
+        if account_uuid not in self._account_urls:
+            available = ", ".join(
+                f"{self._account_names.get(uuid, '?')} ({uuid})" for uuid in self._account_urls
+            )
+            raise ValueError(
+                f"BMO account {account_uuid} was not found on this profile. "
+                f"Accounts detected: {available or 'none'}."
+            )
+        return self._account_urls[account_uuid]
+
+    def _read_side_nav_map(self) -> None:
+        """Populate the UUID -> URL / UUID -> name maps from every side-nav link on the page."""
+        link_selector = json.dumps(str(ConnectionElementId.SIDE_NAV_LINK))
+        script = f"""
+        const out = [];
+        for (const a of document.querySelectorAll({link_selector})) {{
+            const href = a.href || a.getAttribute('href');
+            if (href) out.push([href, (a.textContent || '').trim()]);
+        }}
+        return out;
+        """
+        raw: list[list[str]] = self.driver.execute_script(script) or []
+        for href, name in raw:
+            match = _ACCOUNT_HREF_RE.search(href)
+            if not match:
+                continue
+            uuid = match.group(1)
+            self._account_urls[uuid] = href
+            self._account_names[uuid] = name
 
     def _extract_login_error(self) -> str | None:
         try:

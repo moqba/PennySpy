@@ -32,17 +32,21 @@ Because BMO requires a manual OTP, the flow is split across three endpoints:
 Initiate a BMO login. Credentials are read from environment variables.
 
 <a id="**uuid_guide**"></a>
-The account_uuid can be found on the BMO website. When selecting the specific account of interest. the URL would contain the account_uuid as such : `https://www1.bmo.com/banking/digital/account-details/cc/<account_uuid>`
+The account_uuid can be found on the BMO website. When selecting the specific account of interest, the URL would contain the account_uuid as such: `https://www1.bmo.com/banking/digital/account-details/<type>/<account_uuid>`, where `<type>` is `cc` for a credit card or `ba` for a bank (chequing/savings) account. You only need the UUID — the scraper resolves the correct type automatically from the account side nav, so bank and credit card UUIDs are both accepted (the type prefix in the URL can be ignored).
 
-You can target multiple credit card accounts in a single session by passing more than one
-UUID. When more than one account is scraped, `/bmo/scrape` returns a ZIP archive containing one
-transaction file per account (each namespaced under its account UUID).
+You can target multiple accounts in a single session by passing more than one UUID. When more than
+one account is scraped, `/bmo/scrape` returns a ZIP archive containing one transaction file per
+account (each namespaced under its account UUID).
+
+Note: the CSV/QFX download path (selected with `statement_date`) is credit-card-only. Bank accounts
+must use the web-parsing path (`csv_web` with a `from_date`); a `statement_date` request for a bank
+account is rejected with a clear error.
 
 **Request body (JSON):**
 
 | Name          | Type            | Required | Description                                                                 |
 |---------------|-----------------|----------|-----------------------------------------------------------------------------|
-| account_uuids | array of string | yes      | UUIDs of the BMO credit card accounts to target (a single string is also accepted) |
+| account_uuids | array of string | yes      | UUIDs of the BMO accounts to target — credit card or bank (a single string is also accepted) |
 
 **Response:**
 
