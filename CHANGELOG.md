@@ -3,6 +3,27 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.6.5] - 2026-07-21
+
+### Fixed
+
+- BMO transaction scraping (`csv_web`/`from_date` path) no longer times out for 60 s and fails when
+  a UUID belongs to a bank (chequing/savings) account. The scraper hardcoded the `/cc/` credit-card
+  URL prefix, so a `/ba/` account rendered no transaction table. Each UUID is now resolved to its
+  real account URL from the account side nav (one lookup per session covers every account), and the
+  CSV/QFX download path rejects bank accounts up front with a clear message instead of an opaque API
+  error.
+- BMO web-parsing now scopes every transaction/pagination locator to the visible Ionic page. BMO's
+  router keeps previously visited account pages mounted (hidden) in the DOM, so document-wide
+  locators were picking up rows and buttons from other accounts, corrupting the parse and the
+  "did the page advance?" check.
+- BMO web-parsing reads the transaction table's column layout from its header row, so both the
+  credit-card layout (`Money in/out`) and the bank layout (`Money out`/`Money in`/`Balance`) parse
+  correctly; a bank "money in" row no longer aborts the scrape with `Invalid amount`.
+- BMO pagination can no longer loop forever. It now uses the `1-20 of N` range label to detect the
+  end of the list, raises if a Next click fails to advance the pager, and is bounded by a hard
+  page cap. It also switches the page-size selector to its largest option to walk fewer pages.
+
 ## [0.6.4] - 2026-07-17
 
 ### Fixed
