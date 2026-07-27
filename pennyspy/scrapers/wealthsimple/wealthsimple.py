@@ -87,6 +87,32 @@ def parse_button_texts(button_inner_html: str) -> list[str]:
     ]
 
 
+def _extract_row_value(label_elem: Any) -> str | None:
+    """Return the value paired with a detail-row label element.
+
+    WS renders each detail row as two sibling cells inside a row container:
+    a label cell (holding the ``data-fs-privacy-rule="unmask"`` label) followed
+    by a value cell::
+
+        <div>                          <- row container
+          <div><span unmask>Account</span></div>          <- label cell
+          <div><span>Wealthsimple credit card</span></div><- value cell
+        </div>
+
+    The wrapping ``div`` class names are hashed by styled-components and change
+    on every WS deploy, so navigate by structure — the label cell's next
+    sibling ``div`` — instead of by class name."""
+    label_cell = label_elem.parent
+    if label_cell is None:
+        return None
+    value_cell = label_cell.find_next_sibling("div")
+    if value_cell is None:
+        return None
+    value_el = value_cell.find(["p", "span"])
+    text = (value_el.text if value_el else value_cell.get_text()).strip()
+    return text or None
+
+
 def parse_region_html(region_inner_html: str) -> dict:
     """Extract ActivityField values from the expanded region's innerHTML."""
     soup = BeautifulSoup(region_inner_html, "html.parser")
@@ -100,13 +126,11 @@ def parse_region_html(region_inner_html: str) -> dict:
             {"data-fs-privacy-rule": "unmask"},
             string=lambda s, lbl=label: s and s.strip() == lbl,
         )
-        if label_elem and label_elem.parent and label_elem.parent.parent:
-            row_div = label_elem.parent.parent  # p/span -> div.hQERxA -> div.lizokw
-            value_div = row_div.find("div", class_="gQehiP")
-            if value_div:
-                value_el = value_div.find(["p", "span"])
-                if value_el and hasattr(value_el, "text"):
-                    activity[label.value] = value_el.text.strip()
+        if not label_elem:
+            continue
+        value = _extract_row_value(label_elem)
+        if value is not None:
+            activity[label.value] = value
     return activity
 
 

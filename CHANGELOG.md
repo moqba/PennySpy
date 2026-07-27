@@ -3,6 +3,14 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.6.6] - 2026-07-27
+
+### Fixed
+
+- Wealthsimple activity scraping no longer returns empty rows after a WS front-end redeploy.
+  `parse_region_html` located each field's value by a hardcoded styled-component hash class
+  (`gQehiP`), which WS regenerates on every deploy.
+
 ## [0.6.5] - 2026-07-21
 
 ### Fixed
