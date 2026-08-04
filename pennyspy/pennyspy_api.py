@@ -1,10 +1,12 @@
+import json
+import logging
 import os
 import pathlib
 import tomllib
 from datetime import date, datetime
 from importlib.metadata import PackageNotFoundError, version
 from logging import getLogger
-from typing import Final
+from typing import Any, Final, Literal
 
 from dotenv import load_dotenv
 
@@ -13,11 +15,12 @@ load_dotenv()  # noqa: E402
 import uvicorn
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
 from pennyspy.logging_setup import setup_logging
+from pennyspy.request_log import ResponseDeliveryLogger
 from pennyspy.scrapers.bmo_bank.bmo_bank import BMOBank
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
 from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
@@ -157,9 +160,30 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Added last so it wraps everything else and sees the bytes as they go out to the client.
+app.add_middleware(ResponseDeliveryLogger)
+
+
+class RevalidatedStaticFiles(StaticFiles):
+    """Serve the web UI with revalidation forced on every request.
+
+    Starlette sends an ETag but no ``Cache-Control``, so browsers fall back to heuristic
+    freshness and decide for themselves how long a file stays good. That lets an upgrade
+    apply to a page's HTML while its scripts are still served from cache — the page then
+    runs two versions of itself, and the mismatch surfaces as an element one half expects
+    and the other half has removed. Revalidating keeps them in step; an unchanged file
+    still answers 304 and is not sent again.
+    """
+
+    def file_response(self, *args: Any, **kwargs: Any) -> Response:
+        response = super().file_response(*args, **kwargs)
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return response
+
+
 FRONTEND_DIR = pathlib.Path(os.getenv("FRONTEND_DIR", pathlib.Path(__file__).parent.parent / "frontend"))
 if FRONTEND_DIR.exists():
-    app.mount("/app", StaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
+    app.mount("/app", RevalidatedStaticFiles(directory=FRONTEND_DIR, html=True), name="frontend")
 
 
 def _list_log_files() -> list[pathlib.Path]:
@@ -208,6 +232,50 @@ def delete_logs() -> dict:
 @app.get("/health", tags=["Health"])
 def health_check():
     return {"status": "ok"}
+
+
+# ── Client-side diagnostics ───────────────────────────────────────────
+
+client_logger = getLogger("pennyspy.client")
+
+_CLIENT_LOG_MESSAGE_LIMIT: Final[int] = 500
+_CLIENT_LOG_DETAIL_LIMIT: Final[int] = 4_000
+_CLIENT_LOG_LEVELS: Final[dict[str, int]] = {
+    "error": logging.ERROR,
+    "warning": logging.WARNING,
+    "info": logging.INFO,
+}
+
+
+class ClientLogEntry(BaseModel):
+    """A diagnostic the web UI could not show the user in time to be read."""
+
+    level: Literal["error", "warning", "info"] = "error"
+    message: str
+    detail: dict[str, Any] | None = None
+
+
+def _truncate(text: str, limit: int) -> str:
+    return text if len(text) <= limit else f"{text[:limit]}… (truncated)"
+
+
+@app.post("/client-log", tags=["Logs"])
+def client_log(entry: ClientLogEntry) -> dict[str, str]:
+    """Record a browser-side failure in the server log.
+
+    A scrape error shown in the page is gone as soon as the user navigates away, which is
+    how the one that prompted this went unread. Writing it to the same rotating log as the
+    scrape itself puts both halves of the story in one place, at
+    ``/logs`` and in the mounted data directory.
+    """
+    detail = _truncate(json.dumps(entry.detail, default=str), _CLIENT_LOG_DETAIL_LIMIT) if entry.detail else ""
+    client_logger.log(
+        _CLIENT_LOG_LEVELS[entry.level],
+        "web UI: %s%s",
+        _truncate(entry.message, _CLIENT_LOG_MESSAGE_LIMIT),
+        f" | {detail}" if detail else "",
+    )
+    return {"status": "recorded"}
 
 
 @app.get("/version", tags=["Version"])

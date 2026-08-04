@@ -79,8 +79,27 @@ def _create_file_handler(log_dir: pathlib.Path, level: int) -> tuple[logging.Han
         return handler, fallback_log_file
 
 
-def setup_logging(level: int = logging.INFO) -> pathlib.Path:
+def _resolve_level(level: int | None) -> int:
+    """Level from the caller, else PENNYSPY_LOG_LEVEL, else INFO.
+
+    Reading the env var means a run can be turned up to DEBUG from docker-compose.yml
+    without rebuilding the image.
+    """
+    if level is not None:
+        return level
+    name = os.getenv("PENNYSPY_LOG_LEVEL", "").strip().upper()
+    if not name:
+        return logging.INFO
+    resolved = logging.getLevelName(name)
+    if isinstance(resolved, int):
+        return resolved
+    print(f"pennyspy: unknown PENNYSPY_LOG_LEVEL {name!r}; using INFO", file=sys.stderr)
+    return logging.INFO
+
+
+def setup_logging(level: int | None = None) -> pathlib.Path:
     global _configured, _configured_log_file
+    level = _resolve_level(level)
     log_dir = _ensure_log_dir(_resolve_log_dir())
     if _configured:
         if _configured_log_file is not None:

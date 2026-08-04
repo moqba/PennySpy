@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pennyspy"
-version = "0.6.6"
+version = "0.7.0"
 description = "Scrape transaction history from banks"
 readme = "README.md"
 license = "MIT"
@@ -26,6 +26,9 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = [
+    # Lets the API be exercised over real HTTP (fastapi.testclient), so response headers
+    # and routing are covered, not just the handler's return value.
+    "httpx",
     "mypy",
     "packaging",
     "pandas-stubs",

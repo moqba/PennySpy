@@ -2,16 +2,18 @@ from __future__ import annotations
 
 import shutil
 import tempfile
+from base64 import b64encode
 from dataclasses import asdict
 from logging import getLogger
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, BackgroundTasks, Body, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Response
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
 from pennyspy.scrapers.base import BankScraperInterface
+from pennyspy.scrapers.export_store import prune_exports, retain_exports
 from pennyspy.scrapers.session import ScraperSessionManager
 
 logger = getLogger(__name__)
@@ -97,15 +99,27 @@ def create_scraper_router(
     def scrape(
         params: Annotated[BaseModel, Body()],
         background_tasks: BackgroundTasks,
-    ) -> FileResponse:
+    ) -> Response:
+        """Serve the scraped transaction files.
+
+        One file is served as itself. Several — a bank that exports one file per account —
+        are served as a JSON envelope of base64 contents, so every file reaches the caller
+        intact in one response and the web UI can save each one separately. Packing them
+        into an archive would only make the user unpack it again.
+
+        Whatever is served is also retained on disk (see
+        :mod:`pennyspy.scrapers.export_store`), so a scrape that reaches this point is not
+        lost if the response never makes it to the browser.
+        """
         scrape_kwargs: dict[str, Any] = params.model_dump()
         session_id: str = scrape_kwargs.pop("session_id")
 
         scraper = _get_scraper(session_id)
 
+        prune_exports()
         tmp_dir = tempfile.mkdtemp()
         try:
-            transaction_file = scraper.download_transactions(
+            transaction_files = scraper.download_transaction_files(
                 export_directory=Path(tmp_dir),
                 **scrape_kwargs,
             )
@@ -122,14 +136,41 @@ def create_scraper_router(
 
         session_manager.remove(session_id)
 
-        if not transaction_file.exists():
+        missing = [path for path in transaction_files if not path.exists()]
+        if not transaction_files or missing:
             shutil.rmtree(tmp_dir, ignore_errors=True)
-            raise HTTPException(status_code=404, detail="Transaction file was not created")
+            detail = "Transaction file was not created"
+            if missing:
+                detail = f"Transaction file was not created: {', '.join(path.name for path in missing)}"
+            raise HTTPException(status_code=404, detail=detail)
+
+        retain_exports(transaction_files, session_id)
+
+        if len(transaction_files) > 1:
+            # The contents go into the response body, so the temp directory can be dropped
+            # right away instead of waiting on a background task.
+            payload = {
+                "files": [
+                    {
+                        "filename": path.name,
+                        "content_base64": b64encode(path.read_bytes()).decode("ascii"),
+                    }
+                    for path in transaction_files
+                ]
+            }
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            logger.info(
+                "Serving %d transaction file(s) for session %s: %s",
+                len(transaction_files),
+                session_id,
+                ", ".join(path.name for path in transaction_files),
+            )
+            return JSONResponse(content=payload)
 
         background_tasks.add_task(shutil.rmtree, tmp_dir, True)
         return FileResponse(
-            path=transaction_file,
-            filename=transaction_file.name,
+            path=transaction_files[0],
+            filename=transaction_files[0].name,
             media_type="application/octet-stream",
         )
 

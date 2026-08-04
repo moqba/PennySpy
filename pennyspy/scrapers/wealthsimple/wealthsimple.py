@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import time
+import zipfile
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -16,10 +17,31 @@ from pennyspy.scrapers.get_required_env_var import SecretString, get_required_en
 from pennyspy.scrapers.scraper import BrowserConfig
 from pennyspy.scrapers.wealthsimple.activity_fields import ActivityField
 from pennyspy.scrapers.wealthsimple.activity_id import ActivityCss, ActivityXpath
-from pennyspy.scrapers.wealthsimple.connection_element_id import ActivityElementXpath, ConnectionElementXpath
+from pennyspy.scrapers.wealthsimple.connection_element_id import (
+    ActivityElementXpath,
+    ConnectionElementXpath,
+    ExportElementCss,
+    ExportElementXpath,
+)
 from pennyspy.scrapers.wealthsimple.delay_seconds import DelaySeconds
+from pennyspy.scrapers.wealthsimple.export_period import (
+    PERIOD_MONTHS,
+    ExportPeriod,
+    select_export_period,
+    subtract_months,
+)
 from pennyspy.scrapers.wealthsimple.normalize_financial_data import normalize_financial_df
-from pennyspy.scrapers.zen_scraper import By, TimeoutException, clickable, present, url_to_be, visible
+from pennyspy.scrapers.wealthsimple.split_by_account_type import split_exports_by_account_type
+from pennyspy.scrapers.zen_scraper import (
+    By,
+    ElementHandle,
+    ScraperError,
+    TimeoutException,
+    clickable,
+    present,
+    url_to_be,
+    visible,
+)
 
 WEALTHSIMPLE_ROOT: Final[str] = "https://my.wealthsimple.com"
 
@@ -48,6 +70,11 @@ _SELF_NAMED_TYPES: frozenset[str] = frozenset(
 WEALTHSIMPLE_LOGIN: Final[str] = f"{WEALTHSIMPLE_ROOT}/login"
 WEALTHSIMPLE_HOME: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/home"
 WEALTHSIMPLE_ACTIVITY: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/activity"
+
+# Browser downloads land here, inside the export directory but separate from the
+# normalized CSV the scrape returns, so the download wait can treat the directory as
+# exclusively its own.
+_DOWNLOAD_SUBDIR: Final[str] = "ws_export"
 
 logger = logging.getLogger(__name__)
 
@@ -233,16 +260,250 @@ class Wealthsimple(ZenBankScraper):
             return datetime(d.year, d.month, d.day)
         return d
 
-    def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
+    def download_transaction_files(self, *, export_directory: Path, **kwargs: Any) -> list[Path]:
+        """Wealthsimple's own activity exports, served through unchanged.
+
+        The downloaded CSVs keep every column and row exactly as WS wrote them — no column
+        mapping, no row filtering, no repacking — so the caller sees the bank's native
+        export. Wealthsimple exports one file per account, so this is usually several
+        files; a file that still mixes account types is split along its ``account_type``
+        column (see :mod:`pennyspy.scrapers.wealthsimple.split_by_account_type`).
+        """
         since_date = self._normalize_date(kwargs.get("since_date"))
-        df = self.fetch_activity(since_date=since_date)
-        normalized = normalize_financial_df(df)
         export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
+
+        try:
+            downloads = self._export_activity_csvs(
+                since_date=since_date, download_directory=export_directory / _DOWNLOAD_SUBDIR
+            )
+        except ScraperError as e:
+            # The export dialog is a recent WS addition; a missing step degrades the scrape
+            # to the previous activity-feed parsing rather than failing it.
+            logger.warning(
+                "Wealthsimple CSV export was unavailable (%s); falling back to activity-feed scraping", e
+            )
+            self._save_screenshot("wealthsimple_csv_export_unavailable")
+            return [self._write_scraped_activity(export_directory=export_directory, since_date=since_date)]
+
+        downloads = split_exports_by_account_type(downloads)
+        logger.info(
+            "Returning %d Wealthsimple export(s): %s",
+            len(downloads),
+            ", ".join(path.name for path in downloads),
+        )
+        return downloads
+
+    def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
+        """Single-file view of the export, for callers bound to one path.
+
+        Bundling is only a way to satisfy that one-path contract — nothing over HTTP takes
+        this route, so the web UI never receives a ZIP. Prefer
+        :meth:`download_transaction_files`, which hands back the CSVs themselves.
+        """
+        downloads = self.download_transaction_files(export_directory=export_directory, **kwargs)
+        if len(downloads) == 1:
+            return downloads[0]
+        return self._bundle_exports(downloads, Path(export_directory))
+
+    def _bundle_exports(self, downloads: list[Path], export_directory: Path) -> Path:
+        """Bundle several per-account exports into one ZIP, each file byte-for-byte unchanged."""
+        zip_path = export_directory / f"wealthsimple_activity_{datetime.now().strftime('%Y-%m-%d')}.zip"
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
+            for path in downloads:
+                archive.write(path, arcname=path.name)
+        logger.info("Bundled %d Wealthsimple export(s) into %s", len(downloads), zip_path)
+        return zip_path
+
+    def _write_scraped_activity(self, *, export_directory: Path, since_date: datetime | None) -> Path:
+        """Fallback output: the activity feed parsed into PennySpy's normalized schema."""
+        normalized = normalize_financial_df(self.fetch_activity(since_date=since_date))
         suffix = f"_{normalized['Date'].iloc[0].strftime('%Y-%m-%d')}" if not normalized.empty else ""
         csv_path = export_directory / f"wealthsimple_activity{suffix}.csv"
         normalized.to_csv(csv_path, index=False)
         return csv_path
+
+    # ── Activity export ────────────────────────────────────────────────
+
+    def _export_activity_csvs(self, *, since_date: datetime | None, download_directory: Path) -> list[Path]:
+        """Drive the activity page's "Download activities" dialog and return the saved CSVs."""
+        self._navigate("open Wealthsimple activity page", WEALTHSIMPLE_ACTIVITY)
+        download_button = self._wait_until(
+            "find the Wealthsimple 'Download activities' button",
+            clickable(By.CSS_SELECTOR, ExportElementCss.DOWNLOAD_ACTIVITIES),
+            DelaySeconds.PAGE_LOADING,
+            timeout_log_level=logging.INFO,
+        )
+        self._set_download_directory(download_directory)
+        self._click("open the Wealthsimple activity export dialog", download_button)
+
+        requested_since = since_date.date() if since_date else None
+        period = select_export_period(requested_since)
+        if requested_since is not None and subtract_months(date.today(), PERIOD_MONTHS[period]) > requested_since:
+            logger.warning(
+                "since_date %s predates the longest Wealthsimple export window (%s); "
+                "the export can only reach back that far",
+                requested_since,
+                period.value,
+            )
+        self._select_export_period(period)
+
+        next_button = self._wait_until(
+            "find the Wealthsimple export 'Next' button",
+            clickable(By.CSS_SELECTOR, ExportElementCss.NEXT),
+            DelaySeconds.EXPORT_STEP,
+            screenshot_name="wealthsimple_export_next_missing",
+        )
+        self._click("advance the Wealthsimple export to account selection", next_button)
+
+        account_count = self._select_all_export_accounts()
+
+        csv_button = self._wait_until(
+            "find the enabled Wealthsimple 'Download CSV' button",
+            clickable(By.CSS_SELECTOR, ExportElementCss.DOWNLOAD_CSV),
+            DelaySeconds.EXPORT_STEP,
+            screenshot_name="wealthsimple_export_download_disabled",
+        )
+        self._click("start the Wealthsimple activity CSV download", csv_button)
+
+        # WS exports one CSV per selected account, so the account count is how many files
+        # to wait for. It is only a hint: WS sometimes answers with a single combined CSV,
+        # and the wait returns whatever actually arrived.
+        downloads = self._wait_for_downloads(
+            "download the Wealthsimple activity CSVs",
+            download_directory,
+            timeout=DelaySeconds.DOWNLOAD_TIMEOUT,
+            settle_seconds=DelaySeconds.DOWNLOAD_SETTLE,
+            expected_files=account_count or None,
+            incomplete_settle_seconds=DelaySeconds.DOWNLOAD_INCOMPLETE_SETTLE,
+        )
+        if account_count and len(downloads) != account_count:
+            logger.warning(
+                "Wealthsimple exported %d file(s) for %d selected account(s)",
+                len(downloads),
+                account_count,
+            )
+        return downloads
+
+    def _selected_export_period(self) -> str:
+        text = self.driver.execute_script(
+            f"const el = document.querySelector('{ExportElementCss.PERIOD_SELECTOR}');\n"
+            "return el ? (el.innerText || el.textContent || '') : '';"
+        )
+        return str(text or "")
+
+    def _select_export_period(self, period: ExportPeriod) -> None:
+        """Pick ``period`` in the export dialog's "Select period" dropdown."""
+        selector = self._wait_until(
+            "find the Wealthsimple export period selector",
+            clickable(By.CSS_SELECTOR, ExportElementCss.PERIOD_SELECTOR),
+            DelaySeconds.EXPORT_STEP,
+            screenshot_name="wealthsimple_export_period_selector_missing",
+        )
+        if period.value in self._selected_export_period():
+            logger.info("Wealthsimple export period is already %r", period.value)
+            return
+
+        self._click("open the Wealthsimple export period dropdown", selector)
+        option = self._find_export_period_option(period)
+        self._click(f"select the Wealthsimple export period {period.value!r}", option)
+        try:
+            self._wait_until(
+                f"confirm the Wealthsimple export period is {period.value!r}",
+                lambda _driver: True if period.value in self._selected_export_period() else None,
+                DelaySeconds.ACTION_REFRESH,
+                timeout_log_level=logging.INFO,
+            )
+        except TimeoutException:
+            logger.warning(
+                "Wealthsimple export period selector still reads %r after choosing %r; continuing",
+                self._selected_export_period().replace("\n", " "),
+                period.value,
+            )
+
+    def _find_export_period_option(self, period: ExportPeriod) -> ElementHandle:
+        candidates = (
+            (ExportElementXpath.PERIOD_OPTION, DelaySeconds.EXPORT_STEP),
+            (ExportElementXpath.PERIOD_OPTION_IN_LISTBOX, DelaySeconds.ACTION_REFRESH),
+        )
+        for template, timeout in candidates:
+            locator = str(template).format(label=period.value)
+            try:
+                return self._wait_until(
+                    f"find the Wealthsimple export period option {period.value!r}",
+                    clickable(By.XPATH, locator),
+                    timeout,
+                    timeout_log_level=logging.INFO,
+                )
+            except TimeoutException:
+                logger.info("Wealthsimple export period option not matched by %s", locator)
+        self._save_screenshot("wealthsimple_export_period_option_missing")
+        raise TimeoutException(
+            f"Wealthsimple export period option {period.value!r} was not found in the period dropdown"
+        )
+
+    def _export_account_rows(self) -> list[ElementHandle]:
+        return self.driver.find_elements(By.CSS_SELECTOR, ExportElementCss.ACCOUNT_ROW)
+
+    def _export_account_counts(self) -> tuple[int, int]:
+        """``(selectable rows, rows still unticked)`` in the account-selection step."""
+        counts = self.driver.execute_script(
+            f"const rows = Array.from(document.querySelectorAll('{ExportElementCss.ACCOUNT_ROW}'));\n"
+            "return [rows.length, rows.filter(el => el.getAttribute('aria-checked') !== 'true').length];"
+        ) or [0, 0]
+        return int(counts[0]), int(counts[1])
+
+    def _select_all_export_accounts(self) -> int:
+        """Tick the "All accounts" master checkbox, falling back to per-account rows.
+
+        Returns how many accounts ended up selected — the number of CSVs the export is
+        expected to produce (0 when the rows never rendered)."""
+        all_accounts = self._wait_until(
+            "find the Wealthsimple export 'All accounts' checkbox",
+            clickable(By.XPATH, ExportElementXpath.ALL_ACCOUNTS_CHECKBOX),
+            DelaySeconds.EXPORT_STEP,
+            screenshot_name="wealthsimple_export_all_accounts_missing",
+        )
+        if all_accounts.get_attribute("aria-checked") != "true":
+            self._click("select all Wealthsimple accounts for export", all_accounts)
+
+        # The account rows render asynchronously, so "nothing unticked" only counts as
+        # success once at least one selectable row exists.
+        def every_account_selected(_driver: Any) -> bool | None:
+            total, unchecked = self._export_account_counts()
+            return True if total and not unchecked else None
+
+        try:
+            self._wait_until(
+                "confirm every Wealthsimple account is selected for export",
+                every_account_selected,
+                DelaySeconds.EXPORT_STEP,
+                timeout_log_level=logging.INFO,
+            )
+            total, _ = self._export_account_counts()
+            logger.info("Selected all %d Wealthsimple account(s) for export", total)
+            return total
+        except TimeoutException:
+            total, unchecked = self._export_account_counts()
+            logger.info(
+                "'All accounts' left %d of %d Wealthsimple account row(s) unticked — "
+                "selecting them individually",
+                unchecked,
+                total,
+            )
+
+        for index, row in enumerate(self._export_account_rows()):
+            if row.get_attribute("aria-checked") == "true":
+                continue
+            self._click(f"select Wealthsimple export account row {index}", row, paced=False)
+        total, unchecked = self._export_account_counts()
+        if unchecked:
+            self._save_screenshot("wealthsimple_export_accounts_unselected")
+            raise TimeoutException(
+                f"{unchecked} of {total} Wealthsimple account row(s) could not be selected for export"
+            )
+        logger.info("Selected all %d Wealthsimple account(s) for export individually", total)
+        return total
 
     # ── Internal implementation ────────────────────────────────────────
 

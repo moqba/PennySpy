@@ -2,6 +2,10 @@
 
 const BASE = '';
 
+// Reading the scrape response and saving what it carries is the same job on every bank
+// page, so it lives in scrape-download.js and both pages share it.
+const { StageError, readScrapeResponse, saveAll, describeSaved } = window.ScrapeDownload;
+
 // ── Cookie helpers ────────────────────────────────────────────────
 const setCookie = (name, value) =>
   document.cookie = `${name}=${encodeURIComponent(value)};max-age=31536000;path=/`;
@@ -14,7 +18,6 @@ const getCookie = (name) => {
 let sessionId    = null;
 let isLoggingIn  = false;
 let isFetching   = false;
-let cachedCsvText = null;
 
 const loginBtn      = document.getElementById('login-btn');
 const fetchBtn      = document.getElementById('fetch-btn');
@@ -22,19 +25,39 @@ const otpSection    = document.getElementById('otp-section');
 const statusEl      = document.getElementById('status');
 const sinceDateEl   = document.getElementById('since_date');
 const otpInput      = document.getElementById('otp_code');
-const accountSection = document.getElementById('account-section');
-const accountSelect  = document.getElementById('account-select');
-const downloadBtn    = document.getElementById('download-btn');
+
+// A cached script paired with freshly served markup runs the page as two versions of
+// itself, and the first sign of it is a null element somewhere far from the cause — which
+// reads as a scrape failure rather than a stale file. Say what actually happened instead.
+const missingElements = Object.entries({
+  'login-btn': loginBtn,
+  'fetch-btn': fetchBtn,
+  'otp-section': otpSection,
+  'status': statusEl,
+  'since_date': sinceDateEl,
+  'otp_code': otpInput,
+}).filter(([, el]) => !el).map(([id]) => id);
+
+if (missingElements.length) {
+  const message =
+    `This page and its script are out of step — ${missingElements.join(', ')} missing. ` +
+    'Reload with Ctrl+Shift+R (Cmd+Shift+R on macOS) to clear the cached copy.';
+  document.body.prepend(Object.assign(document.createElement('div'), {
+    className: 'health-alert',
+    textContent: message,
+  }));
+  throw new Error(message);
+}
 
 // ── Populate since_date options ───────────────────────────────────
 (function buildDateOptions() {
   const now = new Date();
+  // These are exactly the periods Wealthsimple's own export offers; since_date picks
+  // the window, and the CSV comes back covering that whole window.
   const options = [
-    { label: 'Last 1 month',  months: 1  },
     { label: 'Last 3 months', months: 3  },
     { label: 'Last 6 months', months: 6  },
-    { label: 'Last 1 year',   months: 12 },
-    { label: 'Last 2 years',  months: 24 },
+    { label: 'Last 12 months', months: 12 },
   ];
   options.forEach(({ label, months }) => {
     const d = new Date(now);
@@ -65,6 +88,7 @@ loginBtn.addEventListener('click', async () => {
   setCookie('ws_since_index', sinceDateEl.selectedIndex);
 
   setLoggingIn(true);
+  clearDiagnostic();
   showStatus('loading', 'Opening Wealthsimple login — complete sign-in in the browser window…');
 
   try {
@@ -83,6 +107,7 @@ loginBtn.addEventListener('click', async () => {
     showStatus('success', 'Login initiated — enter the OTP sent to your device below.');
   } catch (err) {
     showStatus('error', err.message);
+    reportToServer('error', `login failed: ${err.message}`, { userAgent: navigator.userAgent });
     resetFlow();
   } finally {
     setLoggingIn(false);
@@ -109,7 +134,11 @@ fetchBtn.addEventListener('click', async () => {
   }
 
   setFetching(true);
+  clearDiagnostic();
   showStatus('loading', 'Submitting OTP…');
+
+  const diag = { stage: 'verify', startedAt: new Date().toISOString(), userAgent: navigator.userAgent };
+  const startedMs = performance.now();
 
   try {
     // Step 2a: verify OTP
@@ -121,39 +150,69 @@ fetchBtn.addEventListener('click', async () => {
 
     if (!verifyRes.ok) {
       const err = await verifyRes.json().catch(() => ({ detail: `HTTP ${verifyRes.status}` }));
-      throw new Error(err.detail || `OTP verification failed (HTTP ${verifyRes.status})`);
+      throw new StageError('verify', err.detail || `OTP verification failed (HTTP ${verifyRes.status})`, diag);
     }
 
     // Step 2b: scrape transactions
-    showStatus('loading', 'OTP accepted — fetching activity data, this may take a minute…');
+    showStatus('loading', 'OTP accepted — fetching activity data, this may take a few minutes…');
 
-    const res = await fetch(`${BASE}/ws/scrape`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        session_id: sessionId,
-        since_date: sinceDate,
-      }),
-    });
+    diag.stage = 'fetch';
+    const fetchStartedMs = performance.now();
+    let res;
+    try {
+      res = await fetch(`${BASE}/ws/scrape`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          since_date: sinceDate,
+        }),
+      });
+    } catch (err) {
+      // The scrape holds one request open for minutes; a connection that dies in that
+      // window leaves the server having finished the work and the browser with nothing.
+      diag.elapsedMs = Math.round(performance.now() - fetchStartedMs);
+      throw new StageError(
+        'fetch',
+        `The connection dropped after ${Math.round(diag.elapsedMs / 1000)}s — the scrape may have finished on ` +
+        `the server without reaching this page. Check the server log and the exports directory. (${err.message})`,
+        diag,
+      );
+    }
+    diag.elapsedMs = Math.round(performance.now() - fetchStartedMs);
 
     if (res.status === 404) {
       const err = await res.json().catch(() => ({ detail: 'Session not found — please restart the login.' }));
-      throw Object.assign(new Error(err.detail || 'Session expired'), { resetRequired: true });
+      throw Object.assign(new StageError('http', err.detail || 'Session expired', diag), { resetRequired: true });
     }
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: `HTTP ${res.status} — ${res.statusText}` }));
-      throw new Error(err.detail || `HTTP ${res.status}`);
+      throw new StageError('http', err.detail || `HTTP ${res.status}`, diag);
     }
 
-    const blob = await res.blob();
-    cachedCsvText = await blob.text();
-    populateAccountDropdown(cachedCsvText);
-    accountSection.hidden = false;
-    showStatus('success', 'Activity fetched — select an account below and click Download CSV.');
+    // Wealthsimple exports one CSV per account, and each one is saved as its own
+    // download, byte-for-byte as WS wrote it.
+    const files = await readScrapeResponse(res, diag, {
+      fallbackName: `wealthsimple_activity_${today()}.csv`,
+      mimeType: 'text/csv',
+    });
+
+    diag.stage = 'trigger-download';
+    diag.files = files.map((file) => ({ name: file.name, bytes: file.blob.size }));
+    await saveAll(files);
+
+    diag.stage = 'done';
+    diag.totalElapsedMs = Math.round(performance.now() - startedMs);
+    showStatus('success', describeSaved(files));
+    reportToServer('info', `scrape delivered ${files.length} file(s)`, diag);
     resetFlow();
   } catch (err) {
+    const diagnostic = { ...(err.diag || diag), stage: err.stage || diag.stage || 'unknown', message: err.message };
+    diagnostic.totalElapsedMs = Math.round(performance.now() - startedMs);
     showStatus('error', err.message);
+    showDiagnostic(diagnostic);
+    reportToServer('error', `scrape failed at stage "${diagnostic.stage}": ${err.message}`, diagnostic);
     if (err.resetRequired) {
       resetFlow();
     }
@@ -188,8 +247,6 @@ function resetFlow() {
   sinceDateEl.disabled = false;
   fetchBtn.disabled = false;
   otpInput.disabled = false;
-  // Note: cachedCsvText and #account-section are intentionally kept alive
-  // so the user can keep downloading after the login flow is done.
 }
 
 // ── Status display ────────────────────────────────────────────────
@@ -206,90 +263,77 @@ function showStatus(type, message) {
   statusEl.innerHTML = `${icon}<span class="status__text">${escapeHtml(message)}</span>`;
 }
 
-// ── Download helpers ──────────────────────────────────────────────
-function triggerDownload(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-function getFilenameFromResponse(res) {
-  const cd = res.headers.get('Content-Disposition') || '';
-  const match = cd.match(/filename[^;=\n]*=\s*(?:["']([^"']+)["']|([^;\n]+))/i);
-  return (match && (match[1] || match[2])?.trim()) || null;
-}
-
 function today() {
   return new Date().toISOString().split('T')[0];
 }
 
-// ── Account dropdown + filtered download ─────────────────────────
-downloadBtn.addEventListener('click', () => {
-  if (!cachedCsvText) return;
-  const account = accountSelect.value;
-  const filtered = filterCsvByAccount(cachedCsvText, account);
-  const suffix = account === 'ALL' ? 'all' : account.replace(/\s+/g, '_');
-  triggerDownload(new Blob([filtered], { type: 'text/csv' }), `wealthsimple_${suffix}.csv`);
+// ── Diagnostics ───────────────────────────────────────────────────
+// A status message is gone the moment the page is left, which is how the failure that
+// prompted all this went unread. Every failure is therefore also kept on screen and sent
+// to the server log, where it sits next to the scrape it belongs to.
+
+function reportToServer(level, message, detail) {
+  try {
+    fetch(`${BASE}/client-log`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level, message, detail }),
+      keepalive: true,
+    }).catch(() => {});
+  } catch {
+    // Reporting a problem must never become one.
+  }
+}
+
+function diagnosticEl() {
+  let el = document.getElementById('diagnostic');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'diagnostic';
+    statusEl.insertAdjacentElement('afterend', el);
+  }
+  return el;
+}
+
+function clearDiagnostic() {
+  const el = document.getElementById('diagnostic');
+  if (el) el.replaceChildren();
+}
+
+function showDiagnostic(detail) {
+  const el = diagnosticEl();
+  const text = JSON.stringify(detail, null, 2);
+  el.innerHTML =
+    '<details class="diagnostic" open>' +
+    '<summary class="diagnostic__summary">Diagnostic details</summary>' +
+    `<pre class="diagnostic__body">${escapeHtml(text)}</pre>` +
+    '<button type="button" class="btn btn--full" id="diagnostic-copy">Copy diagnostic</button>' +
+    '<p class="diagnostic__note">Also written to the server log — open the Logs page to read it later.</p>' +
+    '</details>';
+  el.querySelector('#diagnostic-copy').addEventListener('click', (event) => {
+    navigator.clipboard.writeText(text).then(
+      () => { event.target.textContent = 'Copied'; },
+      () => { event.target.textContent = 'Copy failed — select the text above'; },
+    );
+  });
+}
+
+window.addEventListener('error', (event) => {
+  reportToServer('error', `uncaught error: ${event.message}`, {
+    source: event.filename,
+    line: event.lineno,
+    column: event.colno,
+    userAgent: navigator.userAgent,
+  });
 });
 
-function populateAccountDropdown(csvText) {
-  const lines = csvText.trim().split('\n');
-  const headers = parseCsvLine(lines[0]);
-  const accountIdx = headers.indexOf('Account');
-  if (accountIdx === -1) return;
-
-  const accounts = new Set();
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i]);
-    if (cols[accountIdx]) accounts.add(cols[accountIdx].trim());
-  }
-
-  accountSelect.innerHTML = '<option value="ALL">ALL</option>';
-  for (const acc of [...accounts].sort()) {
-    const opt = document.createElement('option');
-    opt.value = acc;
-    opt.textContent = acc;
-    accountSelect.appendChild(opt);
-  }
-}
-
-function filterCsvByAccount(csvText, account) {
-  if (account === 'ALL') return csvText;
-  const lines = csvText.trim().split('\n');
-  const headers = parseCsvLine(lines[0]);
-  const accountIdx = headers.indexOf('Account');
-  if (accountIdx === -1) return csvText;
-
-  const kept = [lines[0]];
-  for (let i = 1; i < lines.length; i++) {
-    const cols = parseCsvLine(lines[i]);
-    if (cols[accountIdx]?.trim() === account) kept.push(lines[i]);
-  }
-  return kept.join('\n');
-}
-
-function parseCsvLine(line) {
-  const fields = [];
-  let cur = '';
-  let inQuotes = false;
-  for (let i = 0; i < line.length; i++) {
-    const ch = line[i];
-    if (inQuotes) {
-      if (ch === '"' && line[i + 1] === '"') { cur += '"'; i++; }
-      else if (ch === '"') { inQuotes = false; }
-      else { cur += ch; }
-    } else {
-      if (ch === '"') { inQuotes = true; }
-      else if (ch === ',') { fields.push(cur); cur = ''; }
-      else { cur += ch; }
-    }
-  }
-  fields.push(cur);
-  return fields;
-}
+window.addEventListener('unhandledrejection', (event) => {
+  const reason = event.reason;
+  reportToServer('error', `unhandled rejection: ${(reason && reason.message) || reason}`, {
+    stack: reason && reason.stack,
+    userAgent: navigator.userAgent,
+  });
+});
 
 function escapeHtml(str) {
   return String(str)

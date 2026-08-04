@@ -555,6 +555,49 @@ textarea.input-otp {
 
 .status__text { flex: 1; }
 
+/* ─── DIAGNOSTIC ────────────────────────────────────────────────── */
+/* Stays on screen after a failed scrape: the status text alone is gone as soon as the
+   page is left, and the details here are what explain a download that never arrived. */
+.diagnostic {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-2);
+  border-radius: var(--radius-md);
+  background: var(--surface-2);
+  font-size: 12px;
+}
+
+.diagnostic__summary {
+  cursor: pointer;
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.diagnostic__body {
+  margin: 12px 0;
+  padding: 10px;
+  max-height: 260px;
+  overflow: auto;
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.diagnostic__note {
+  margin-top: 10px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
 /* ─── SPINNER ───────────────────────────────────────────────────── */
 .spinner {
   width: 14px;

@@ -57,6 +57,15 @@ class BankScraperInterface(ABC):
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
         """Download transactions and return the path to the resulting file."""
 
+    def download_transaction_files(self, *, export_directory: Path, **kwargs: Any) -> list[Path]:
+        """Every file the download produced, in the order they should be served.
+
+        A bank that exports one file per account overrides this to return them all, so the
+        caller can hand each one over separately instead of receiving them packed together.
+        The default is the single file from :meth:`download_transactions`.
+        """
+        return [self.download_transactions(export_directory=export_directory, **kwargs)]
+
     @abstractmethod
     def quit(self) -> None:
         """Tear down the browser and release resources."""
