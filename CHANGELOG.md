@@ -3,6 +3,11 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.7.1] - 2026-08-04
+
+### Fixed
+- Wealthsimple missing import.
+
 ## [0.7.0] - 2026-08-02
 
 ### Added
