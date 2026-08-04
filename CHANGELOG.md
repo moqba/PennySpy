@@ -3,6 +3,33 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.7.0] - 2026-08-02
+
+### Added
+
+- Wealthsimple activity is now collected through WS's own "Download activities" CSV export
+  instead of by expanding every row of the activity feed. 
+- Browser downloads are now supported by the zendriver engine: `_set_download_directory` routes
+  them into a scrape-owned directory and `_wait_for_downloads` waits for the whole batch,
+  treating the download as complete only once no `.crdownload` remains and the finished set has
+  stopped changing.
+- `/scrape` responses now log their delivery: status, total bytes written and elapsed time on
+  success, and a warning when the body is cut short.
+- `POST /client-log` records browser-side failures in the server log, next to the scrape they
+  belong to. A message shown only in the page is gone as soon as the user navigates away.
+
+### Changed
+
+- A multi-file scrape is no longer packed into a ZIP, uses multi download instead.
+- The Wealthsimple page's "Download by Account" dropdown is no longer necessary, downloading all accounts.
+  filter rows client-side — mangling any quoted field containing a line break — while
+  Wealthsimple already exports one file per account.
+- A multi-account BMO scrape now serves one file per account instead of a ZIP, through the same
+  mechanism as Wealthsimple
+- A Wealthsimple export that carries an `account_type` column is now split along it: each account
+  type gets its own CSV, prefixed with the type lowercased and with spaces as dashes
+  (`Credit Card` -> `credit-card-activities-export.csv`). 
+
 ## [0.6.6] - 2026-07-27
 
 ### Fixed

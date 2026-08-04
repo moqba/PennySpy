@@ -2,6 +2,10 @@
 
 const BASE = '';
 
+// Reading the scrape response and saving what it carries is the same job on every bank
+// page, so it lives in scrape-download.js and both pages share it.
+const { readScrapeResponse, saveAll, describeSaved } = window.ScrapeDownload;
+
 // ── Cookie helpers ────────────────────────────────────────────────
 const setCookie = (name, value) =>
   document.cookie = `${name}=${encodeURIComponent(value)};max-age=31536000;path=/`;
@@ -162,20 +166,21 @@ fetchBtn.addEventListener('click', async () => {
       throw new Error(err.detail || `HTTP ${res.status}`);
     }
 
-    const accountCount = parseAccountUuids(document.getElementById('account_uuids').value).length;
-    const isMultiAccount = accountCount > 1;
+    // BMO downloads one file per account, and each one is saved as its own download —
+    // several accounts arrive as separate files rather than as an archive to unpack.
+    const ext = APP_TYPE_EXTENSION[app_type] || 'dat';
+    const files = await readScrapeResponse(res, {}, {
+      fallbackName: `bmo_${app_type}_${today()}.${ext}`,
+    });
+    await saveAll(files);
+    showStatus('success', describeSaved(files, 'Transactions'));
 
-    const blob = await res.blob();
-    const ext = isMultiAccount ? 'zip' : (APP_TYPE_EXTENSION[app_type] || 'dat');
-    const filename = getFilenameFromResponse(res) || `bmo_${app_type}_${today()}.${ext}`;
-    triggerDownload(blob, filename);
-    showStatus('success', `File downloaded — ${filename}`);
-
-    // The QFX/OFX filter only applies to a single plain-text OFX file, not a multi-account ZIP.
-    const isOfx = ['msmoney', 'quicken'].includes(app_type) && !isMultiAccount;
+    // The QFX/OFX filter reads one plain-text OFX file, so it only applies when the scrape
+    // produced exactly one.
+    const isOfx = ['msmoney', 'quicken'].includes(app_type) && files.length === 1;
     if (isOfx) {
-      const ofxText = await blob.text();
-      QfxFilter.initUI(document.getElementById('qfx-filter-section'), ofxText, filename);
+      const ofxText = await files[0].blob.text();
+      QfxFilter.initUI(document.getElementById('qfx-filter-section'), ofxText, files[0].name);
       // Partial reset: hide OTP but keep filter section visible
       sessionId = null;
       otpSection.hidden = true;
@@ -243,21 +248,6 @@ function showStatus(type, message) {
 }
 
 // ── Download helpers ──────────────────────────────────────────────
-function triggerDownload(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
-}
-
-function getFilenameFromResponse(res) {
-  const cd = res.headers.get('Content-Disposition') || '';
-  const match = cd.match(/filename[^;=\n]*=\s*(?:["']([^"']+)["']|([^;\n]+))/i);
-  return (match && (match[1] || match[2])?.trim()) || null;
-}
-
 function today() {
   return new Date().toISOString().split('T')[0];
 }

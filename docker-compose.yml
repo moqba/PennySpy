@@ -7,6 +7,11 @@ services:
       # The browser is visible by default. Set this to true to run headless
       # (no live view, lower resource use).
       # - PENNYSPY_HEADLESS=true
+      # Raise log detail for a run being diagnosed (DEBUG, INFO, WARNING, ERROR).
+      # - PENNYSPY_LOG_LEVEL=DEBUG
+      # Where scraped exports are kept after being served, so a download that fails in the
+      # browser can still be picked up from disk. Defaults to /app/data/exports.
+      # - PENNYSPY_EXPORT_DIR=/app/data/exports
       # Save current page HTML next to scraper failure diagnostics when set.
       # Captured pages may include sensitive bank page content.
       # - PENNYSPY_FAILURE_HTML_DIR=/app/data/failure-html

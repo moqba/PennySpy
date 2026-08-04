@@ -29,7 +29,7 @@
         <div class="form-group">
           <label class="form-label" for="account_uuids">Account UUIDs</label>
           <textarea id="account_uuids" class="input-otp" rows="3" placeholder="One UUID per line (or comma-separated)&#10;xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" spellcheck="false" autocomplete="off"></textarea>
-          <p class="form-hint">Enter one or more account UUIDs — one per line or separated by commas. Multiple accounts are returned as a ZIP.</p>
+          <p class="form-hint">Enter one or more account UUIDs — one per line or separated by commas. Each account is downloaded as its own file.</p>
         </div>
 
         <div class="form-group">
@@ -119,6 +119,7 @@
   </div>
   <a href="logs.html" class="logs-fab">Logs</a>
   <script src="qfx-filter.js"></script>
+  <script src="scrape-download.js"></script>
   <script src="bmo.js"></script>
   <script src="package-version.js"></script>
   <script src="health-check.js"></script>

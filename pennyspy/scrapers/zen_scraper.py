@@ -144,6 +144,9 @@ _JS_IS_DISPLAYED = """
 # Names that callers read as live DOM properties rather than static HTML attributes.
 _PROPERTY_ATTRIBUTES = frozenset({"value", "textContent", "innerText", "innerHTML"})
 
+# Extensions Chrome uses for a download that is still being written.
+_PARTIAL_DOWNLOAD_SUFFIXES = frozenset({".crdownload", ".part", ".tmp"})
+
 
 # ── Element wrapper ─────────────────────────────────────────────────────────────────
 
@@ -498,6 +501,127 @@ class ZenScraper:
             description,
             max_attempts,
         )
+
+    # ── downloads ────────────────────────────────────────────────────────────────────
+
+    def _set_download_directory(self, directory: Path) -> None:
+        """Route browser-initiated downloads into ``directory`` instead of the OS download folder."""
+        logger.info("Setting the browser download directory to %s", directory)
+        directory.mkdir(parents=True, exist_ok=True)
+        try:
+            self._run(self._tab.set_download_path(directory))
+        except Exception as e:
+            raise ScraperError(f"Failed while setting the browser download directory to {directory}") from e
+
+    @staticmethod
+    def _scan_download_dir(directory: Path) -> tuple[dict[Path, int], bool]:
+        """Return ``({finished file: size}, any_partial)`` for ``directory``.
+
+        Entries can vanish mid-scan (Chrome renames ``*.crdownload`` to the final name), so
+        a disappearing file is simply skipped and picked up on the next poll.
+        """
+        finished: dict[Path, int] = {}
+        partial = False
+        for path in directory.iterdir():
+            try:
+                if not path.is_file():
+                    continue
+                if path.suffix.lower() in _PARTIAL_DOWNLOAD_SUFFIXES:
+                    partial = True
+                    continue
+                finished[path] = path.stat().st_size
+            except OSError:
+                partial = True
+        return finished, partial
+
+    def _wait_for_downloads(
+        self,
+        description: str,
+        directory: Path,
+        *,
+        timeout: int,
+        settle_seconds: float = 5.0,
+        expected_files: int | None = None,
+        incomplete_settle_seconds: float | None = None,
+    ) -> list[Path]:
+        """Wait for browser downloads to land in ``directory`` and return the finished files.
+
+        A single click can start several downloads and the browser reports no total, so
+        completion is inferred rather than counted: at least one finished file must exist,
+        no partial file may remain, and the finished set must stay unchanged for
+        ``settle_seconds``. ``directory`` should be used exclusively for this download so
+        pre-existing files cannot satisfy the wait.
+
+        ``expected_files`` is a hint, not a contract: while fewer files have arrived, the
+        set must stay unchanged for ``incomplete_settle_seconds`` (much longer) before the
+        wait gives up on the rest. Banks that generate each file server-side can leave gaps
+        of tens of seconds between downloads, during which no ``.crdownload`` exists at all
+        and the short settle would otherwise return a partial batch. A run that legitimately
+        yields fewer files than expected still returns them, just later.
+        """
+        logger.info(
+            "Waiting to %s in %s (timeout: %ss, expecting %s file(s))",
+            description,
+            directory,
+            timeout,
+            expected_files if expected_files else "any number of",
+        )
+        if incomplete_settle_seconds is None:
+            incomplete_settle_seconds = settle_seconds
+        deadline = time.monotonic() + timeout
+        snapshot: dict[Path, int] = {}
+        stable_since: float | None = None
+        while True:
+            finished, partial = self._scan_download_dir(directory)
+            now = time.monotonic()
+            if finished != snapshot:
+                snapshot = finished
+                stable_since = None
+            if partial:
+                stable_since = None
+            elif stable_since is None:
+                stable_since = now
+            complete = expected_files is None or len(snapshot) >= expected_files
+            required_settle = settle_seconds if complete else incomplete_settle_seconds
+            if snapshot and stable_since is not None and now - stable_since >= required_settle:
+                files = sorted(snapshot)
+                if not complete:
+                    logger.warning(
+                        "Finished waiting to %s with %d of %s expected file(s) after %ss "
+                        "without any new download; continuing with what arrived",
+                        description,
+                        len(files),
+                        expected_files,
+                        incomplete_settle_seconds,
+                    )
+                logger.info(
+                    "Finished waiting to %s; downloaded %d file(s): %s",
+                    description,
+                    len(files),
+                    ", ".join(path.name for path in files),
+                )
+                return files
+            if now >= deadline:
+                if snapshot:
+                    # Files did arrive, the batch just never settled. Handing them over beats
+                    # failing the scrape, which would discard a real export for a partial one.
+                    files = sorted(snapshot)
+                    logger.warning(
+                        "Timed out after %ss while waiting to %s, but %d file(s) had finished "
+                        "downloading (partial download still in progress: %s); returning them: %s",
+                        timeout,
+                        description,
+                        len(files),
+                        partial,
+                        ", ".join(path.name for path in files),
+                    )
+                    return files
+                logger.error("Timed out while waiting to %s after %ss", description, timeout)
+                raise TimeoutException(
+                    f"Timed out while waiting to {description} after {timeout}s "
+                    f"({len(snapshot)} finished file(s) in {directory}, partial download in progress: {partial})"
+                )
+            time.sleep(0.5)
 
     # ── cookies ──────────────────────────────────────────────────────────────────────
 

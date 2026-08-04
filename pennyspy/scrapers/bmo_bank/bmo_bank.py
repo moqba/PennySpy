@@ -50,6 +50,9 @@ _ACCOUNT_HREF_RE: Final[re.Pattern[str]] = re.compile(
 )
 # Hard cap on pagination so a pager that stops advancing can never spin the request forever.
 _MAX_PAGINATION_PAGES: Final[int] = 60
+# Cap on the account-name part of a multi-account filename, so a long side-nav label
+# (name, type and masked number) can't grow the path past what the filesystem accepts.
+_MAX_ACCOUNT_SLUG_CHARS: Final[int] = 40
 
 logger = logging.getLogger(__name__)
 
@@ -100,13 +103,41 @@ class BMOBank(ZenBankScraper):
         self._authenticated = True
         return AuthStep(status="authenticated")
 
+    def download_transaction_files(self, *, export_directory: Path, **kwargs: Any) -> list[Path]:
+        """One file per requested account, handed back as they were downloaded.
+
+        BMO downloads per account, so a multi-account scrape produces several files. They are
+        returned as themselves rather than packed into an archive, so the caller can serve each
+        one separately instead of leaving the user an archive to unpack.
+        """
+        results = self._download_per_account(export_directory=Path(export_directory), **kwargs)
+        logger.info(
+            "Returning %d BMO download(s): %s",
+            len(results),
+            ", ".join(path.name for _, path in results),
+        )
+        return [path for _, path in results]
+
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
+        """Single-file view of the download, for callers bound to one path.
+
+        Bundling is only a way to satisfy that one-path contract — nothing over HTTP takes this
+        route, so the web UI never receives a ZIP. Prefer :meth:`download_transaction_files`,
+        which hands back the per-account files themselves.
+        """
+        export_directory = Path(export_directory)
+        results = self._download_per_account(export_directory=export_directory, **kwargs)
+        if len(results) == 1:
+            return results[0][1]
+        return self._bundle_files(results, export_directory)
+
+    def _download_per_account(self, *, export_directory: Path, **kwargs: Any) -> list[tuple[str, Path]]:
+        """Download every requested account's transactions as ``(uuid, path)`` pairs."""
         assert self._account_uuids, "No account UUIDs available for this session"
         app_type: AppType = kwargs["app_type"]
         from_date = kwargs.get("from_date")
         statement_date: StatementDate | None = kwargs.get("statement_date")
 
-        export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
 
         single_account = len(self._account_uuids) == 1
@@ -115,8 +146,8 @@ class BMOBank(ZenBankScraper):
         for account_uuid in self._account_uuids:
             logger.info("Downloading transactions for account %s", account_uuid)
             # Give each account its own directory so identically-named default
-            # download files don't overwrite one another before bundling. A single
-            # account writes straight to export_directory to preserve the old path.
+            # download files don't overwrite one another before they are labelled
+            # apart. A single account writes straight to export_directory.
             account_dir = export_directory if single_account else export_directory / account_uuid
             if from_date is not None:
                 # Web scraping path — uses the live browser, no cookies needed
@@ -145,11 +176,36 @@ class BMOBank(ZenBankScraper):
                     statement_date=statement_date,
                     export_directory=account_dir,
                 )
+            if not single_account:
+                file_path = self._label_with_account(file_path, account_uuid)
             results.append((account_uuid, file_path))
 
-        if len(results) == 1:
-            return results[0][1]
-        return self._bundle_files(results, export_directory)
+        return results
+
+    def _label_with_account(self, path: Path, account_uuid: str) -> Path:
+        """Rename ``path`` so its name says which account it holds.
+
+        BMO names every account's download the same thing, so files from a multi-account scrape
+        would be indistinguishable once they are served side by side — and would overwrite each
+        other wherever they are collected into one directory. The display name is what the user
+        recognises, but two accounts can share one, so the UUID's leading block is appended to
+        keep the name unique. Renaming is best effort: a failure here must not lose a download
+        that already succeeded.
+        """
+        name = self._account_names.get(account_uuid, "")
+        slug = re.sub(r"[^A-Za-z0-9]+", "-", name).strip("-").lower()[:_MAX_ACCOUNT_SLUG_CHARS].strip("-")
+        short_uuid = account_uuid.split("-")[0][:8] or "account"
+        label = f"{slug}-{short_uuid}" if slug else short_uuid
+
+        target = path.with_name(f"{path.stem}_{label}{path.suffix}")
+        if target == path:
+            return path
+        try:
+            path.replace(target)
+        except OSError:
+            logger.warning("Could not rename %s to %s; serving it under its original name", path, target.name)
+            return path
+        return target
 
     def _bundle_files(self, results: list[tuple[str, Path]], export_directory: Path) -> Path:
         """Bundle multiple per-account transaction files into a single ZIP archive.

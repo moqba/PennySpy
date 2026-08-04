@@ -22,7 +22,7 @@
 
       <!-- ── Step 1 ─────────────────────────────────────────────── -->
       <div class="form-group">
-        <label class="form-label" for="since_date">Export Since</label>
+        <label class="form-label" for="since_date">Export Period</label>
         <select id="since_date" class="select">
           <!-- Populated by ws.js -->
         </select>
@@ -64,23 +64,11 @@
       </div>
 
       <div id="status" hidden></div>
-
-      <div id="account-section" hidden>
-        <div class="divider"></div>
-        <div class="form-group">
-          <label class="form-label" for="account-select">Download by Account</label>
-          <select id="account-select" class="select">
-            <option value="ALL">ALL</option>
-          </select>
-        </div>
-        <button id="download-btn" class="btn btn--primary btn--full btn--mt">
-          Download CSV
-        </button>
-      </div>
     </div>
 
   </div>
   <a href="logs.html" class="logs-fab">Logs</a>
+  <script src="scrape-download.js"></script>
   <script src="ws.js"></script>
   <script src="package-version.js"></script>
   <script src="health-check.js"></script>
