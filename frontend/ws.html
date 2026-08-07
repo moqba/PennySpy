@@ -26,6 +26,24 @@
         <select id="since_date" class="select">
           <!-- Populated by ws.js -->
         </select>
+        <p class="form-hint">Covers both the activity export and any daily earnings below.</p>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="account_ids">Account IDs for Daily Earnings <span class="form-optional">optional</span></label>
+        <textarea id="account_ids" class="input-otp" rows="3" placeholder="One ID per line (or comma-separated)&#10;tfsa-l0re4cur" spellcheck="false" autocomplete="off"></textarea>
+        <p class="form-hint">
+          Leave empty for the activity export alone. Name an account and you also get a
+          <strong>daily earnings</strong> CSV for it: one line per day for what the account earned on
+          its own &mdash; market moves, dividends, interest, fees &mdash; and one for any money you
+          moved in or out, so a deposit no longer reads as growth. The activity export cannot show
+          this: it lists what moved, not what the market did.
+        </p>
+        <p class="form-hint">
+          An account ID is the end of its page URL &mdash;
+          <code>my.wealthsimple.com/app/account-details/<strong>tfsa-l0re4cur</strong></code>.
+          Each account is downloaded as its own CSV.
+        </p>
       </div>
 
       <button id="login-btn" class="btn btn--primary btn--full btn--mt">

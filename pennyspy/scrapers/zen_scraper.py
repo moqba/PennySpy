@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Any, TypeVar, cast
 
 import zendriver
-from zendriver import Browser, Config, Element, KeyEvents, KeyPressEvent, SpecialKeys, Tab
+from zendriver import Browser, Config, Element, KeyEvents, KeyPressEvent, SpecialKeys, Tab, cdp
 
 # Shared config + screenshot/HTML artifact helpers (engine-independent).
 from pennyspy.scrapers.scraper import (
@@ -121,8 +121,7 @@ def _make_user_data_dir() -> Path:
             # container) must not crash login. The profile is ephemeral and rmtree'd on quit,
             # so the system temp dir is a safe home.
             logger.warning(
-                "Configured browser user-data parent %r is not usable (%s); "
-                "falling back to the system temp dir.",
+                "Configured browser user-data parent %r is not usable (%s); falling back to the system temp dir.",
                 parent,
                 e,
             )
@@ -240,6 +239,62 @@ class _DriverShim:
 
     def save_screenshot(self, path: str) -> None:
         self._scraper._run(self._scraper._tab.save_screenshot(path, format="png"))
+
+
+# ── Request recording ───────────────────────────────────────────────────────────────
+
+
+class RequestLog:
+    """The headers of every matching request the browser made, oldest first.
+
+    Filled from CDP ``Network.requestWillBeSent``, which reports what the browser is about
+    to put on the wire. That is the one vantage point that does not care *how* the page made
+    the request: fetch, XMLHttpRequest, a worker, or whatever transport the bundle ships
+    next month all arrive here identically. Wrapping ``window.fetch`` from an injected script
+    sees only one of those, and only if the injection lands at all.
+
+    The recorded headers are credentials. Nothing in this class logs a value, and
+    :meth:`describe` exists so a caller can say what was captured without showing it.
+    """
+
+    def __init__(self, url_contains: str, *, limit: int = 40) -> None:
+        self.url_contains = url_contains
+        self._limit = limit
+        # Handlers run on a zendriver worker thread while the scraper polls from its own.
+        self._lock = threading.Lock()
+        self._captures: list[dict[str, str]] = []
+        self.seen = 0
+
+    def __call__(self, event: Any, connection: Any = None) -> None:
+        """Receive one ``RequestWillBeSent``. Never raises: a recorder must not break a scrape."""
+        try:
+            request = event.request
+            if self.url_contains not in str(getattr(request, "url", "") or ""):
+                return
+            headers = {str(key).lower(): str(value) for key, value in dict(request.headers).items()}
+        except Exception:  # pragma: no cover - defensive; a malformed event is not worth a failure
+            return
+        with self._lock:
+            self.seen += 1
+            self._captures.append(headers)
+            del self._captures[: -self._limit]
+
+    def captures(self) -> list[dict[str, str]]:
+        with self._lock:
+            return list(self._captures)
+
+    def describe(self, *, interesting: str = "") -> str:
+        """What was captured, in a form safe to log: counts and header names, never values."""
+        captures = self.captures()
+        names = sorted({name for headers in captures for name in headers})
+        summary = f"{self.seen} request(s) matching {self.url_contains!r}, {len(captures)} kept"
+        if interesting:
+            values = sorted({headers[interesting] for headers in captures if headers.get(interesting)})
+            summary += f"; {interesting}: {', '.join(values) or 'none'}"
+        return f"{summary}; header names: {', '.join(names) or 'none'}"
+
+    def __repr__(self) -> str:
+        return f"<RequestLog {self.url_contains!r}: {self.seen} seen>"
 
 
 # ── The scraper base ────────────────────────────────────────────────────────────────
@@ -372,6 +427,63 @@ class ZenScraper:
                 raise TimeoutException(f"Timed out while {description} after {timeout}s")
             time.sleep(0.3)
 
+    # ── page scripts ─────────────────────────────────────────────────────────────────
+
+    def _add_init_script(self, description: str, source: str) -> None:
+        """Run ``source`` at the start of every document this tab loads from now on.
+
+        ``driver.execute_script`` can only run once a page already exists, which is too late
+        to observe what that page did while it was loading. An init script is installed
+        ahead of the document's own scripts, so a hook it puts in place is in effect for the
+        page's very first request. It stays installed across navigations until the tab is
+        closed."""
+        logger.info("Installing a page init script to %s", description)
+        try:
+            self._run(self._tab.send(cdp.page.add_script_to_evaluate_on_new_document(source)))
+        except Exception as e:
+            raise ScraperError(f"Failed while installing the page init script to {description}") from e
+
+    # ── request recording ────────────────────────────────────────────────────────────
+
+    def _record_requests(self, description: str, url_contains: str) -> RequestLog:
+        """Start recording the headers of requests whose URL contains ``url_contains``.
+
+        Recording is done by the browser, not by anything injected into the page, so it is
+        unaffected by the page's CSP, by which transport the bundle uses, and by whether an
+        init script managed to run before the page's own scripts. It also survives
+        navigation: the handler is attached to the tab, not to a document."""
+        logger.info("Starting request recording to %s", description)
+        log = RequestLog(url_contains)
+        try:
+            self._run(self._tab.send(cdp.network.enable()))
+        except Exception as e:
+            raise ScraperError(f"Failed while starting request recording to {description}") from e
+        self._tab.add_handler(cdp.network.RequestWillBeSent, log)
+        return log
+
+    def _stop_recording_requests(self, log: RequestLog) -> None:
+        """Detach ``log``. Best effort — a recorder left attached is not worth a failure."""
+        try:
+            self._tab.remove_handlers(cdp.network.RequestWillBeSent, log)
+        except Exception as e:
+            logger.debug("Could not detach the request recorder: %s", e)
+
+    def _evaluate_async_script(self, description: str, expression: str) -> Any:
+        """Evaluate ``expression`` and wait for the promise it returns to settle.
+
+        ``driver.execute_script`` hands back the promise object itself, which is useless to
+        the caller; this awaits it in the page and returns the resolved value. ``expression``
+        must be a complete JavaScript expression evaluating to a promise, and should resolve
+        rather than reject — a rejection surfaces here only as a failed evaluation, with none
+        of the detail the page had."""
+        logger.info("Starting action: %s", description)
+        try:
+            result = self._run(self._tab.evaluate(expression, await_promise=True))
+        except Exception as e:
+            raise ScraperError(f"Failed while {description}") from e
+        logger.info("Completed action: %s", description)
+        return result
+
     # ── delays ───────────────────────────────────────────────────────────────────────
 
     def _action_delay(self, *, paced: bool) -> None:
@@ -482,9 +594,7 @@ class ZenScraper:
             try:
                 actual = element.get_attribute("value")
             except ScraperError:
-                logger.warning(
-                    "Could not read back value for %s; proceeding despite unverified field", description
-                )
+                logger.warning("Could not read back value for %s; proceeding despite unverified field", description)
                 break
             if actual == value:
                 logger.info("Verified %s on attempt %d/%d", description, attempt, max_attempts)

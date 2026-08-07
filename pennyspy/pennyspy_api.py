@@ -75,8 +75,27 @@ class ScotiaScrapeParams(BaseModel):
 
 
 class WsScrapeParams(BaseModel):
+    """Wealthsimple's activity export, and optionally a daily earnings series beside it.
+
+    ``account_ids`` are the ids in the account-details URL
+    (``my.wealthsimple.com/app/account-details/tfsa-l0re4cur`` -> ``tfsa-l0re4cur``). Naming
+    any adds one earnings CSV per account to the response, covering the same window
+    ``since_date`` selects; leaving the list empty downloads the activity export alone.
+    """
+
     session_id: str
     since_date: date
+    account_ids: list[str] = []
+
+    @field_validator("account_ids", mode="before")
+    @classmethod
+    def _coerce_account_ids(cls, value: object) -> list[str]:
+        if value is None:
+            return []
+        raw = [value] if isinstance(value, str) else value
+        if not isinstance(raw, (list, tuple)):
+            raise ValueError("account_ids must be a string or a list of strings")
+        return [str(item).strip() for item in raw if str(item).strip()]
 
 
 # ── App setup ─────────────────────────────────────────────────────────
@@ -139,6 +158,7 @@ app.include_router(
     prefix="/scotia",
     tags=["Scotiabank"],
 )
+
 
 app.include_router(
     create_scraper_router(

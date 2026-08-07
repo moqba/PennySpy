@@ -5,6 +5,7 @@ import logging
 import re
 import time
 import zipfile
+from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -15,9 +16,24 @@ from pandas import DataFrame
 from pennyspy.scrapers.base import AuthStep, ZenBankScraper
 from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
 from pennyspy.scrapers.scraper import BrowserConfig
+from pennyspy.scrapers.wealthsimple.account_earnings import (
+    DEFAULT_CURRENCY,
+    GRAPH_RANGE_TAB,
+    GRAPH_TIME_RANGE,
+    EarningsDataError,
+    EarningsRow,
+    EntryType,
+    daily_earnings,
+    earnings_filename,
+    graph_reaches,
+    graph_request_body,
+    validate_account_id,
+    write_earnings_csv,
+)
 from pennyspy.scrapers.wealthsimple.activity_fields import ActivityField
 from pennyspy.scrapers.wealthsimple.activity_id import ActivityCss, ActivityXpath
 from pennyspy.scrapers.wealthsimple.connection_element_id import (
+    AccountGraphXpath,
     ActivityElementXpath,
     ConnectionElementXpath,
     ExportElementCss,
@@ -30,11 +46,19 @@ from pennyspy.scrapers.wealthsimple.export_period import (
     select_export_period,
     subtract_months,
 )
+from pennyspy.scrapers.wealthsimple.graph_client import (
+    GRAPHQL_PATH,
+    OPERATION_NAME_HEADER,
+    build_graph_fetch_expression,
+    graph_request_headers,
+    select_graph_headers,
+)
 from pennyspy.scrapers.wealthsimple.normalize_financial_data import normalize_financial_df
 from pennyspy.scrapers.wealthsimple.split_by_account_type import split_exports_by_account_type
 from pennyspy.scrapers.zen_scraper import (
     By,
     ElementHandle,
+    RequestLog,
     ScraperError,
     TimeoutException,
     clickable,
@@ -70,6 +94,11 @@ _SELF_NAMED_TYPES: frozenset[str] = frozenset(
 WEALTHSIMPLE_LOGIN: Final[str] = f"{WEALTHSIMPLE_ROOT}/login"
 WEALTHSIMPLE_HOME: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/home"
 WEALTHSIMPLE_ACTIVITY: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/activity"
+WEALTHSIMPLE_ACCOUNT_DETAILS: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/account-details"
+
+# The chart-toolbar tab that plots what the account was worth. Its sibling, "Returns", plots
+# WS's own return figure instead, which is not what the earnings series is built from.
+ACCOUNT_VALUE_TAB: Final[str] = "Account value"
 
 # Browser downloads land here, inside the export directory but separate from the
 # normalized CSV the scrape returns, so the download wait can treat the directory as
@@ -260,7 +289,13 @@ class Wealthsimple(ZenBankScraper):
             return datetime(d.year, d.month, d.day)
         return d
 
-    def download_transaction_files(self, *, export_directory: Path, **kwargs: Any) -> list[Path]:
+    def download_transaction_files(
+        self,
+        *,
+        export_directory: Path,
+        account_ids: Sequence[str] = (),
+        **kwargs: Any,
+    ) -> list[Path]:
         """Wealthsimple's own activity exports, served through unchanged.
 
         The downloaded CSVs keep every column and row exactly as WS wrote them — no column
@@ -268,8 +303,17 @@ class Wealthsimple(ZenBankScraper):
         export. Wealthsimple exports one file per account, so this is usually several
         files; a file that still mixes account types is split along its ``account_type``
         column (see :mod:`pennyspy.scrapers.wealthsimple.split_by_account_type`).
+
+        ``account_ids`` is optional and asks for a second kind of file alongside the export:
+        a daily earnings series per account, covering the same window (see
+        :meth:`download_account_earnings`). It rides along with the activity export rather
+        than being its own download because both cost the same login and the same OTP, and
+        the activity export cannot say what an account earned — it lists what moved, not what
+        the market did. The ids are validated before anything is downloaded, so a mistyped
+        one is reported straight away instead of after several minutes of scraping.
         """
         since_date = self._normalize_date(kwargs.get("since_date"))
+        accounts = self._unique_account_ids(account_ids) if account_ids else []
         export_directory = Path(export_directory)
         export_directory.mkdir(parents=True, exist_ok=True)
 
@@ -280,19 +324,51 @@ class Wealthsimple(ZenBankScraper):
         except ScraperError as e:
             # The export dialog is a recent WS addition; a missing step degrades the scrape
             # to the previous activity-feed parsing rather than failing it.
-            logger.warning(
-                "Wealthsimple CSV export was unavailable (%s); falling back to activity-feed scraping", e
-            )
+            logger.warning("Wealthsimple CSV export was unavailable (%s); falling back to activity-feed scraping", e)
             self._save_screenshot("wealthsimple_csv_export_unavailable")
-            return [self._write_scraped_activity(export_directory=export_directory, since_date=since_date)]
+            downloads = [self._write_scraped_activity(export_directory=export_directory, since_date=since_date)]
+        else:
+            downloads = split_exports_by_account_type(downloads)
 
-        downloads = split_exports_by_account_type(downloads)
+        downloads += self._earnings_alongside_activity(
+            export_directory=export_directory,
+            account_ids=accounts,
+            since_date=since_date,
+        )
         logger.info(
             "Returning %d Wealthsimple export(s): %s",
             len(downloads),
             ", ".join(path.name for path in downloads),
         )
         return downloads
+
+    def _earnings_alongside_activity(
+        self,
+        *,
+        export_directory: Path,
+        account_ids: Sequence[str],
+        since_date: datetime | None,
+    ) -> list[Path]:
+        """The earnings CSVs for ``account_ids``, or none of them if the graph cannot be read.
+
+        A graph that will not answer must not cost the activity export, which by this point
+        has already been downloaded and is what most of the request was for. The failure is
+        logged and the activity CSVs are served on their own.
+        """
+        if not account_ids:
+            return []
+        try:
+            return self.download_account_earnings(
+                export_directory=export_directory,
+                account_ids=account_ids,
+                since_date=since_date,
+            )
+        except (ScraperError, EarningsDataError):
+            logger.exception(
+                "Could not build the Wealthsimple earnings series for %s; serving the activity export alone",
+                ", ".join(account_ids),
+            )
+            return []
 
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
         """Single-file view of the export, for callers bound to one path.
@@ -322,6 +398,265 @@ class Wealthsimple(ZenBankScraper):
         csv_path = export_directory / f"wealthsimple_activity{suffix}.csv"
         normalized.to_csv(csv_path, index=False)
         return csv_path
+
+    # ── Daily earnings ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _as_date(value: datetime | date | None) -> date | None:
+        return value.date() if isinstance(value, datetime) else value
+
+    @staticmethod
+    def _unique_account_ids(account_ids: Sequence[str]) -> list[str]:
+        """The requested ids, validated, blanks dropped, duplicates removed, order kept."""
+        unique: list[str] = []
+        for raw in account_ids:
+            if not str(raw).strip():
+                continue
+            account_id = validate_account_id(str(raw))
+            if account_id not in unique:
+                unique.append(account_id)
+        if not unique:
+            raise ValueError("At least one Wealthsimple account id is required to build an earnings CSV")
+        return unique
+
+    def download_account_earnings(
+        self,
+        *,
+        export_directory: Path,
+        account_ids: Sequence[str],
+        since_date: datetime | date | None = None,
+        until_date: datetime | date | None = None,
+        currency: str = DEFAULT_CURRENCY,
+        **kwargs: Any,
+    ) -> list[Path]:
+        """One CSV per account, each day's change written as a deposit line, an earnings line, or both.
+
+        The columns and how each day is derived are described in
+        :mod:`pennyspy.scrapers.wealthsimple.account_earnings`; the short version is that a
+        day's change is split into the money that moved in or out and what the account earned
+        once that movement is taken back out, and each half that came to something is written
+        as its own line under the date it happened on.
+
+        An account that cannot be read does not take the others down with it: the failure is
+        logged with the account it belongs to and the remaining accounts are still written,
+        since every account here cost the same login and OTP. Nothing being readable is an
+        error.
+        """
+        accounts = self._unique_account_ids(account_ids)
+        today = date.today()
+        since = self._as_date(since_date) or subtract_months(today, PERIOD_MONTHS[ExportPeriod.LAST_12_MONTHS])
+        # A day past today has no value to report, and asking for one would only forward-fill
+        # today's figure into the future as if it were real.
+        until = min(self._as_date(until_date) or today, today)
+        if until < since:
+            raise ValueError(f"The earnings window ends before it starts: {since} to {until}")
+
+        if not graph_reaches(since, today=today):
+            logger.warning(
+                "since_date %s predates the one-year Wealthsimple account graph; the CSV can "
+                "only start where that graph does",
+                since,
+            )
+
+        export_directory = Path(export_directory)
+        export_directory.mkdir(parents=True, exist_ok=True)
+
+        graph_headers = self._prime_graph_headers(accounts)
+
+        written: list[Path] = []
+        failures: dict[str, str] = {}
+        for account_id in accounts:
+            try:
+                payload = self._fetch_account_graph(account_id, currency, graph_headers)
+                rows = daily_earnings(
+                    payload,
+                    account_id=account_id,
+                    since_date=since,
+                    until_date=until,
+                    currency=currency,
+                )
+            except (EarningsDataError, ScraperError) as e:
+                logger.exception("Failed to build the Wealthsimple earnings series for account %s", account_id)
+                failures[account_id] = str(e)
+                continue
+            written.append(write_earnings_csv(rows, export_directory / earnings_filename(account_id, rows)))
+            self._log_earnings_summary(account_id, rows)
+
+        if failures and not written:
+            raise ScraperError(
+                "Could not read any Wealthsimple account graph: "
+                + "; ".join(f"{account_id}: {reason}" for account_id, reason in failures.items())
+            )
+        if failures:
+            logger.warning(
+                "Serving %d of %d Wealthsimple earnings file(s); no data for: %s",
+                len(written),
+                len(accounts),
+                ", ".join(failures),
+            )
+        return written
+
+    @staticmethod
+    def _log_earnings_summary(account_id: str, rows: list[EarningsRow]) -> None:
+        if not rows:
+            logger.warning(
+                "Wealthsimple account %s produced no earnings lines in the requested window — no money "
+                "moved and its value did not change",
+                account_id,
+            )
+            return
+        days = {row.day for row in rows}
+        carried = len({row.day for row in rows if not row.reported})
+        logger.info(
+            "Wealthsimple account %s: %s to %s, %d line(s) over %d day(s)%s, earnings %s, net deposits %s",
+            account_id,
+            rows[0].day,
+            rows[-1].day,
+            len(rows),
+            len(days),
+            f" ({carried} carried forward)" if carried else "",
+            sum(row.amount for row in rows if row.entry_type is EntryType.EARNING),
+            sum(row.amount for row in rows if row.entry_type is EntryType.DEPOSIT),
+        )
+
+    def _prime_graph_headers(self, account_ids: Sequence[str]) -> dict[str, str]:
+        """Get the app to make its own GraphQL requests, and borrow the credentials off one.
+
+        The browser records every request to the GraphQL endpoint for the whole of this step,
+        so the recording does not depend on anything landing inside the page and is not lost
+        when the page navigates. Each account is opened in turn because the first id may be
+        one the user mistyped, whose page never gets as far as querying a graph.
+
+        Only the graph operation itself is worth opening more pages for: it is the one whose
+        ``x-ws-operation-hash`` matches the document being replayed. Any other authenticated
+        request does just as well otherwise, so once every account has been tried the best
+        recording of whatever kind is taken.
+
+        Returns the header set to replay the earnings query with.
+        """
+        log = self._record_requests("capture the Wealthsimple GraphQL credentials", GRAPHQL_PATH)
+        try:
+            return self._await_graph_headers(log, account_ids)
+        finally:
+            self._stop_recording_requests(log)
+
+    def _await_graph_headers(self, log: RequestLog, account_ids: Sequence[str]) -> dict[str, str]:
+        for account_id in account_ids:
+            self._open_account_graph(account_id)
+            try:
+                self._wait_until(
+                    f"observe the Wealthsimple account-graph request for {account_id}",
+                    lambda _driver: self._graph_operation_seen(log) or None,
+                    DelaySeconds.GRAPH_HEADERS,
+                    timeout_log_level=logging.INFO,
+                )
+                logger.info("Captured the Wealthsimple account-graph request headers from %s", account_id)
+                break
+            except TimeoutException:
+                logger.info(
+                    "The account-details page for %s made no account-graph request within %ss — %s",
+                    account_id,
+                    int(DelaySeconds.GRAPH_HEADERS),
+                    log.describe(interesting=OPERATION_NAME_HEADER),
+                )
+
+        selected = select_graph_headers(log.captures())
+        if selected is None:
+            logger.error("Wealthsimple GraphQL request recording came up empty — %s", log.describe())
+            self._save_screenshot("wealthsimple_graph_headers_missing")
+            raise ScraperError(
+                "The browser recorded no request at all to the Wealthsimple GraphQL endpoint, so "
+                f"the account graph cannot be queried — the session may have been signed out ({log.describe()})"
+            )
+
+        headers, is_graph_operation = selected
+        if not is_graph_operation:
+            # The credentials are the app's, not the operation's: any request to the endpoint
+            # carries them. Only the per-operation hash is lost, and the query is sent in full
+            # so the server does not need it.
+            logger.warning(
+                "No account-graph request was recorded; replaying with the credentials of another "
+                "Wealthsimple GraphQL request (%s)",
+                log.describe(interesting=OPERATION_NAME_HEADER),
+            )
+        return graph_request_headers(headers, is_graph_operation=is_graph_operation)
+
+    @staticmethod
+    def _graph_operation_seen(log: RequestLog) -> bool:
+        selected = select_graph_headers(log.captures())
+        return bool(selected and selected[1])
+
+    def _open_account_graph(self, account_id: str) -> None:
+        self._navigate(
+            f"open the Wealthsimple account-details page for {account_id}",
+            f"{WEALTHSIMPLE_ACCOUNT_DETAILS}/{account_id}",
+        )
+        self._select_graph_view(account_id)
+
+    def _select_graph_view(self, account_id: str) -> None:
+        """Put the account-details chart on the account-value graph over the queried range.
+
+        Left alone the page opens on a one-day chart, so the request the recorder sees is a
+        ``ONE_DAY`` one. Clicking the two tabs the chart toolbar offers — the "Account value"
+        metric, then the one-year range — has the page issue the very request the earnings
+        query goes on to replay, ``x-ws-operation-hash`` included, and proves the account can
+        actually draw that range before anything is asked of it.
+
+        The metric is clicked first: switching what the chart plots is what redraws the
+        toolbar, and doing it second could put the range back where it started.
+
+        Neither click is required. The earnings query carries its own ``timeRange`` and the
+        recorder keeps whatever ``FetchAccountGraphData`` it sees, so a tab WS has renamed or
+        dropped costs the tidier priming request rather than the scrape — it is logged and
+        the wait for the headers goes ahead regardless.
+        """
+        self._click_graph_tab(account_id, ACCOUNT_VALUE_TAB)
+        self._click_graph_tab(account_id, GRAPH_RANGE_TAB)
+
+    def _click_graph_tab(self, account_id: str, label: str) -> None:
+        """Click the chart-toolbar tab labelled ``label``, or log why it could not be."""
+        try:
+            tab = self._wait_until(
+                f"find the Wealthsimple '{label}' chart tab for {account_id}",
+                clickable(By.XPATH, AccountGraphXpath.CHART_TAB.format(label=label)),
+                DelaySeconds.GRAPH_TAB,
+                timeout_log_level=logging.INFO,
+            )
+            self._click(f"select the Wealthsimple '{label}' chart tab", tab)
+        except (TimeoutException, ScraperError):
+            logger.info(
+                "Could not select the '%s' chart tab on the account-details page for %s; "
+                "the graph query does not depend on it",
+                label,
+                account_id,
+            )
+
+    def _fetch_account_graph(self, account_id: str, currency: str, headers: dict[str, str]) -> dict[str, Any]:
+        """Query one account's value graph from inside the page and return the JSON body.
+
+        The request goes out from the page rather than from Python so that it carries the
+        session cookies and the app's own origin; ``headers`` supplies the rest of what the
+        app stamps on such a request."""
+        result = self._evaluate_async_script(
+            f"query the Wealthsimple {GRAPH_TIME_RANGE} account graph for {account_id}",
+            build_graph_fetch_expression(
+                graph_request_body(account_id, currency=currency),
+                headers=headers,
+                timeout_seconds=int(DelaySeconds.GRAPH_REQUEST),
+            ),
+        )
+        if not isinstance(result, dict):
+            raise ScraperError(
+                f"The Wealthsimple account graph query for {account_id} returned {type(result).__name__}, "
+                "not a result object"
+            )
+        payload = result.get("payload")
+        if not result.get("ok") or not isinstance(payload, dict):
+            raise ScraperError(
+                f"The Wealthsimple account graph query for {account_id} failed "
+                f"(status {result.get('status', 'none')}): {result.get('error') or result.get('body') or 'no body'}"
+            )
+        return payload
 
     # ── Activity export ────────────────────────────────────────────────
 
@@ -486,8 +821,7 @@ class Wealthsimple(ZenBankScraper):
         except TimeoutException:
             total, unchecked = self._export_account_counts()
             logger.info(
-                "'All accounts' left %d of %d Wealthsimple account row(s) unticked — "
-                "selecting them individually",
+                "'All accounts' left %d of %d Wealthsimple account row(s) unticked — selecting them individually",
                 unchecked,
                 total,
             )
@@ -577,9 +911,7 @@ class Wealthsimple(ZenBankScraper):
         return _parse_header_date(headers[-1].text)
 
     def _count_header_buttons(self) -> int:
-        count = self.driver.execute_script(
-            f"return document.querySelectorAll('{ActivityCss.HEADER_BUTTON}').length;"
-        )
+        count = self.driver.execute_script(f"return document.querySelectorAll('{ActivityCss.HEADER_BUTTON}').length;")
         return int(count or 0)
 
     def _load_more_until(self, since_date: datetime) -> None:
@@ -604,18 +936,21 @@ class Wealthsimple(ZenBankScraper):
 
         Returns ``(region_id, is_expanded, date)`` per activity row. A ``None`` date
         (unparseable or no header seen yet) means the row is treated as in range."""
-        raw: list[list] = self.driver.execute_script(
-            "const nodes = document.querySelectorAll("
-            f"'h3[data-fs-privacy-rule=\"unmask\"], {ActivityCss.HEADER_BUTTON}');\n"
-            "const out = [];\n"
-            "let currentDate = null;\n"
-            "for (const node of nodes) {\n"
-            "  if (node.tagName === 'H3') { currentDate = node.textContent.trim(); continue; }\n"
-            "  out.push([node.getAttribute('aria-controls'),\n"
-            "            node.getAttribute('aria-expanded') === 'true', currentDate]);\n"
-            "}\n"
-            "return out;"
-        ) or []
+        raw: list[list] = (
+            self.driver.execute_script(
+                "const nodes = document.querySelectorAll("
+                f"'h3[data-fs-privacy-rule=\"unmask\"], {ActivityCss.HEADER_BUTTON}');\n"
+                "const out = [];\n"
+                "let currentDate = null;\n"
+                "for (const node of nodes) {\n"
+                "  if (node.tagName === 'H3') { currentDate = node.textContent.trim(); continue; }\n"
+                "  out.push([node.getAttribute('aria-controls'),\n"
+                "            node.getAttribute('aria-expanded') === 'true', currentDate]);\n"
+                "}\n"
+                "return out;"
+            )
+            or []
+        )
         rows: list[tuple[str, bool, datetime | None]] = []
         for region_id, expanded, date_text in raw:
             if not region_id:
@@ -668,16 +1003,19 @@ class Wealthsimple(ZenBankScraper):
         ``since_date`` ranges ever make it too large."""
         if not region_ids:
             return []
-        raw: list[list] = self.driver.execute_script(
-            f"const ids = {json.dumps(region_ids)};\n"
-            "const out = [];\n"
-            "for (const id of ids) {\n"
-            "  const region = document.getElementById(id);\n"
-            "  const button = document.querySelector('button[aria-controls=' + JSON.stringify(id) + ']');\n"
-            "  out.push([id, button ? button.innerHTML : null, region ? region.innerHTML : null]);\n"
-            "}\n"
-            "return out;"
-        ) or []
+        raw: list[list] = (
+            self.driver.execute_script(
+                f"const ids = {json.dumps(region_ids)};\n"
+                "const out = [];\n"
+                "for (const id of ids) {\n"
+                "  const region = document.getElementById(id);\n"
+                "  const button = document.querySelector('button[aria-controls=' + JSON.stringify(id) + ']');\n"
+                "  out.push([id, button ? button.innerHTML : null, region ? region.innerHTML : null]);\n"
+                "}\n"
+                "return out;"
+            )
+            or []
+        )
         return [(region_id, button_html, region_html) for region_id, button_html, region_html in raw]
 
     def _expand_and_get_all_activity(self, since_date: datetime | None = None) -> DataFrame:
@@ -705,7 +1043,9 @@ class Wealthsimple(ZenBankScraper):
         self._send_keys_verified("enter Wealthsimple username", username_field, username.reveal(), sensitive=True)
         password_field = self._find_element("enter Wealthsimple password", By.XPATH, ConnectionElementXpath.PASSWORD)
         self._send_keys_verified("enter Wealthsimple password", password_field, password.reveal(), sensitive=True)
-        submit_btn = self._find_element("click Wealthsimple login submit button", By.XPATH, ConnectionElementXpath.SUBMIT)
+        submit_btn = self._find_element(
+            "click Wealthsimple login submit button", By.XPATH, ConnectionElementXpath.SUBMIT
+        )
         self._click("click Wealthsimple login submit button", submit_btn)
 
     def _check_for_wrong_login(self):
