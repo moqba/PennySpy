@@ -95,12 +95,8 @@ def create_scraper_router(
             raise HTTPException(status_code=400, detail=str(e))
         return {"session_id": params.session_id, **asdict(step)}
 
-    @router.post("/scrape")
-    def scrape(
-        params: Annotated[BaseModel, Body()],
-        background_tasks: BackgroundTasks,
-    ) -> Response:
-        """Serve the scraped transaction files.
+    def scrape(params: BaseModel, background_tasks: BackgroundTasks) -> Response:
+        """Serve the files the scrape produced.
 
         One file is served as itself. Several — a bank that exports one file per account —
         are served as a JSON envelope of base64 contents, so every file reaches the caller
@@ -119,10 +115,7 @@ def create_scraper_router(
         prune_exports()
         tmp_dir = tempfile.mkdtemp()
         try:
-            transaction_files = scraper.download_transaction_files(
-                export_directory=Path(tmp_dir),
-                **scrape_kwargs,
-            )
+            transaction_files = scraper.download_transaction_files(export_directory=Path(tmp_dir), **scrape_kwargs)
         except ValueError as e:
             logger.exception("%s scrape validation error for session %s", scraper_type.__name__, session_id)
             session_manager.remove(session_id)
@@ -174,7 +167,16 @@ def create_scraper_router(
             media_type="application/octet-stream",
         )
 
-    # Override the scrape endpoint's annotation to use the concrete model
-    scrape.__annotations__["params"] = Annotated[scrape_params_model, Body()]
+    def scrape_endpoint(
+        params: Annotated[BaseModel, Body()],
+        background_tasks: BackgroundTasks,
+    ) -> Response:
+        return scrape(params, background_tasks)
+
+    # FastAPI reads the request model off the endpoint's annotations, so the bank's concrete
+    # model is substituted before the endpoint is registered.
+    scrape_endpoint.__annotations__["params"] = Annotated[scrape_params_model, Body()]
+    scrape_endpoint.__doc__ = scrape.__doc__
+    router.post("/scrape")(scrape_endpoint)
 
     return router

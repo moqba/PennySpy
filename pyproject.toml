@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pennyspy"
-version = "0.7.1"
+version = "0.7.2"
 description = "Scrape transaction history from banks"
 readme = "README.md"
 license = "MIT"

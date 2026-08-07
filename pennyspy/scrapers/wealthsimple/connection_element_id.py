@@ -15,6 +15,20 @@ class ActivityElementXpath(StrEnum):
     LOAD_MORE = '//button[@role="button" and .//span[normalize-space()="Load more"]]'
 
 
+class AccountGraphXpath(StrEnum):
+    """The chart toolbar on the account-details page.
+
+    Both controls the toolbar offers — the metric ("Account value" / "Returns") and the time
+    range (1D … ALL) — are ``role="tab"`` buttons inside a ``role="tablist"``, and their label
+    is the only stable thing about them: the class names are styled-components hashes, and the
+    one ``data-qa`` on the toolbar spells out the *current* selection
+    (``time-filter-segmented-control_value-1y``) rather than naming the control.
+    """
+
+    # ``{label}`` is a tab's visible text, e.g. "Account value" or "1Y".
+    CHART_TAB = '//div[@role="tablist"]//button[@role="tab" and .//span[normalize-space()="{label}"]]'
+
+
 class ExportElementCss(StrEnum):
     """The activity-page "Download activities" export dialog.
 

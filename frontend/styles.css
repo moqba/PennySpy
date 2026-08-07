@@ -422,6 +422,20 @@ textarea.input-otp {
   line-height: 1.4;
 }
 
+/* Marks a field the scrape runs perfectly well without. */
+.form-optional {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted, #6b7280);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
 /* ─── DIVIDER ───────────────────────────────────────────────────── */
 .divider {
   height: 1px;

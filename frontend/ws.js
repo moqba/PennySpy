@@ -19,12 +19,13 @@ let sessionId    = null;
 let isLoggingIn  = false;
 let isFetching   = false;
 
-const loginBtn      = document.getElementById('login-btn');
-const fetchBtn      = document.getElementById('fetch-btn');
-const otpSection    = document.getElementById('otp-section');
-const statusEl      = document.getElementById('status');
-const sinceDateEl   = document.getElementById('since_date');
-const otpInput      = document.getElementById('otp_code');
+const loginBtn         = document.getElementById('login-btn');
+const fetchBtn         = document.getElementById('fetch-btn');
+const otpSection       = document.getElementById('otp-section');
+const statusEl         = document.getElementById('status');
+const sinceDateEl      = document.getElementById('since_date');
+const otpInput         = document.getElementById('otp_code');
+const accountIdsEl     = document.getElementById('account_ids');
 
 // A cached script paired with freshly served markup runs the page as two versions of
 // itself, and the first sign of it is a null element somewhere far from the cause — which
@@ -36,6 +37,7 @@ const missingElements = Object.entries({
   'status': statusEl,
   'since_date': sinceDateEl,
   'otp_code': otpInput,
+  'account_ids': accountIdsEl,
 }).filter(([, el]) => !el).map(([id]) => id);
 
 if (missingElements.length) {
@@ -53,7 +55,9 @@ if (missingElements.length) {
 (function buildDateOptions() {
   const now = new Date();
   // These are exactly the periods Wealthsimple's own export offers; since_date picks
-  // the window, and the CSV comes back covering that whole window.
+  // the window, and the CSV comes back covering that whole window. The daily earnings
+  // series uses the same window — its graph is always fetched over a year and trimmed to
+  // the chosen period on the server.
   const options = [
     { label: 'Last 3 months', months: 3  },
     { label: 'Last 6 months', months: 6  },
@@ -73,6 +77,32 @@ if (missingElements.length) {
   }
 })();
 
+// ── Daily earnings ────────────────────────────────────────────────
+// The earnings series rides along with the activity export: naming accounts adds one CSV
+// each to the same download, and naming none downloads the activity export alone. The
+// button says which of the two is about to happen.
+(function initAccountIds() {
+  const savedAccounts = getCookie('ws_account_ids');
+  if (savedAccounts) accountIdsEl.value = parseAccountIds(savedAccounts).join('\n');
+
+  accountIdsEl.addEventListener('input', applyDownloadLabel);
+  applyDownloadLabel();
+})();
+
+function applyDownloadLabel() {
+  fetchBtn.textContent = parseAccountIds(accountIdsEl.value).length
+    ? 'Download Activity + Earnings'
+    : 'Download Activity';
+}
+
+// Split the account-ID textarea on newlines and/or commas, trimming blanks.
+function parseAccountIds(raw) {
+  return String(raw || '')
+    .split(/[\n,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 // ── Beforeunload guard ────────────────────────────────────────────
 window.addEventListener('beforeunload', (e) => {
   if (isLoggingIn || isFetching) {
@@ -86,6 +116,7 @@ loginBtn.addEventListener('click', async () => {
   if (isLoggingIn || isFetching) return;
 
   setCookie('ws_since_index', sinceDateEl.selectedIndex);
+  setCookie('ws_account_ids', parseAccountIds(accountIdsEl.value).join('\n'));
 
   setLoggingIn(true);
   clearDiagnostic();
@@ -118,8 +149,8 @@ loginBtn.addEventListener('click', async () => {
 fetchBtn.addEventListener('click', async () => {
   if (isFetching) return;
 
-  const otpCode   = otpInput.value.trim();
-  const sinceDate = sinceDateEl.value;
+  const otpCode = otpInput.value.trim();
+  const request = buildDownloadRequest();
 
   if (!otpCode) {
     showStatus('error', 'Please enter your OTP code before continuing.');
@@ -154,19 +185,17 @@ fetchBtn.addEventListener('click', async () => {
     }
 
     // Step 2b: scrape transactions
-    showStatus('loading', 'OTP accepted — fetching activity data, this may take a few minutes…');
+    showStatus('loading', `OTP accepted — ${request.progress}, this may take a few minutes…`);
 
     diag.stage = 'fetch';
+    diag.download = request.type;
     const fetchStartedMs = performance.now();
     let res;
     try {
-      res = await fetch(`${BASE}/ws/scrape`, {
+      res = await fetch(`${BASE}${request.path}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          since_date: sinceDate,
-        }),
+        body: JSON.stringify({ session_id: sessionId, ...request.body }),
       });
     } catch (err) {
       // The scrape holds one request open for minutes; a connection that dies in that
@@ -191,10 +220,11 @@ fetchBtn.addEventListener('click', async () => {
       throw new StageError('http', err.detail || `HTTP ${res.status}`, diag);
     }
 
-    // Wealthsimple exports one CSV per account, and each one is saved as its own
-    // download, byte-for-byte as WS wrote it.
+    // Wealthsimple gives one CSV per account, and each one is saved as its own download —
+    // the activity exports byte-for-byte as WS wrote them, and an earnings series per
+    // account named above, built on the server.
     const files = await readScrapeResponse(res, diag, {
-      fallbackName: `wealthsimple_activity_${today()}.csv`,
+      fallbackName: request.fallbackName,
       mimeType: 'text/csv',
     });
 
@@ -204,7 +234,7 @@ fetchBtn.addEventListener('click', async () => {
 
     diag.stage = 'done';
     diag.totalElapsedMs = Math.round(performance.now() - startedMs);
-    showStatus('success', describeSaved(files));
+    showStatus('success', describeSaved(files, request.label));
     reportToServer('info', `scrape delivered ${files.length} file(s)`, diag);
     resetFlow();
   } catch (err) {
@@ -226,11 +256,32 @@ otpInput.addEventListener('keydown', (e) => {
   if (e.key === 'Enter') fetchBtn.click();
 });
 
+// ── The request the current choice describes ──────────────────────
+// Returns everything the fetch step needs. The options are read here rather than when the
+// login started, so a correction made while waiting for the OTP is the one that gets sent.
+function buildDownloadRequest() {
+  const accountIds = parseAccountIds(accountIdsEl.value);
+  const accounts = `${accountIds.length} account${accountIds.length > 1 ? 's' : ''}`;
+
+  return {
+    type: accountIds.length ? 'activity+earnings' : 'activity',
+    path: '/ws/scrape',
+    body: { since_date: sinceDateEl.value, account_ids: accountIds },
+    progress: accountIds.length
+      ? `fetching activity data and daily earnings for ${accounts}`
+      : 'fetching activity data',
+    label: accountIds.length ? 'Activity and daily earnings' : 'Activity',
+    fallbackName: `wealthsimple_activity_${today()}.csv`,
+  };
+}
+
 // ── State helpers ─────────────────────────────────────────────────
+const optionInputs = () => [sinceDateEl, accountIdsEl];
+
 function setLoggingIn(active) {
   isLoggingIn = active;
   loginBtn.disabled = active;
-  sinceDateEl.disabled = active;
+  optionInputs().forEach((el) => { el.disabled = active; });
 }
 
 function setFetching(active) {
@@ -244,7 +295,7 @@ function resetFlow() {
   otpSection.hidden = true;
   otpInput.value = '';
   loginBtn.disabled = false;
-  sinceDateEl.disabled = false;
+  optionInputs().forEach((el) => { el.disabled = false; });
   fetchBtn.disabled = false;
   otpInput.disabled = false;
 }

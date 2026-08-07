@@ -3,6 +3,20 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.7.2] - 2026-08-07
+
+### Added
+
+- `POST /ws/scrape` takes an optional `account_ids`, and every account named gets a day-by-day
+  earnings CSV alongside the activity export. A day's change is split into the money that moved
+  in or out and what the account earned once that movement is taken back out — market moves,
+  dividends, interest, fees — so a deposit no longer reads as growth. 
+- Each half of a day is written as its own line, told apart by an `entry_type` column (`deposit`
+  or `earning`) alongside a single `amount`, which is the shape a ledger reads. A day where money
+  went in *and* the market moved produces two lines sharing one date; a half that came to zero
+  writes no line, so most days carry an earnings line alone and a day where nothing moved
+  contributes nothing.
+
 ## [0.7.1] - 2026-08-04
 
 ### Fixed
