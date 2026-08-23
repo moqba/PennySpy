@@ -12,7 +12,9 @@ _ACTIVE_TAB_PANEL = (
 class ConnectionElementId(StrEnum):
     USERNAME = "//fdc-input[@id='username']/div/div/input"
     PASSWORD = "//fdc-input[@id='password']/div/div/input"
-    SIGN_IN = "//button[@aria-label='Sign in to Online Banking']"
+    SIGN_IN = "//button[@name='login-submit']"
+    SIGN_IN_ARIA = "//button[@aria-label='Sign in to Online Banking']"
+    SIGN_IN_TEXT = "//button[@type='submit'][normalize-space(.)='Sign in']"
     COOKIE_ACCEPT = "//button[@id='onetrust-accept-btn-handler']"
     LOGIN_ERROR_BANNER = "//div[contains(@class,'alert-danger')]"
     # 2FA flow

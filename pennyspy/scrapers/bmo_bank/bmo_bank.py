@@ -23,6 +23,8 @@ from pennyspy.scrapers.get_required_env_var import SecretString, get_required_en
 from pennyspy.scrapers.scraper import BrowserConfig
 from pennyspy.scrapers.zen_scraper import (
     By,
+    ElementHandle,
+    ScraperError,
     StaleElementReferenceException,
     TimeoutException,
     WebDriverException,
@@ -50,6 +52,12 @@ _ACCOUNT_HREF_RE: Final[re.Pattern[str]] = re.compile(
 )
 # Hard cap on pagination so a pager that stops advancing can never spin the request forever.
 _MAX_PAGINATION_PAGES: Final[int] = 60
+# Sign-in button locators, most- to least-specific (see BMOBank._find_sign_in_button).
+_SIGN_IN_LOCATORS: Final[tuple[str, ...]] = (
+    ConnectionElementId.SIGN_IN,
+    ConnectionElementId.SIGN_IN_ARIA,
+    ConnectionElementId.SIGN_IN_TEXT,
+)
 # Cap on the account-name part of a multi-account filename, so a long side-nav label
 # (name, type and masked number) can't grow the path past what the filesystem accepts.
 _MAX_ACCOUNT_SLUG_CHARS: Final[int] = 40
@@ -626,8 +634,23 @@ class BMOBank(ZenBankScraper):
         password_field = self._find_element("enter BMO password", By.XPATH, ConnectionElementId.PASSWORD)
         self._send_keys_verified("enter BMO password", password_field, password.reveal(), sensitive=True)
         self._ensure_password_populated(password)
-        sign_in_btn = self._find_element("click BMO sign-in button", By.XPATH, ConnectionElementId.SIGN_IN)
+        sign_in_btn = self._find_sign_in_button()
         self._click("click BMO sign-in button", sign_in_btn)
+
+    def _find_sign_in_button(self) -> ElementHandle:
+        """Locate the login form's submit button, trying each known markup in turn.
+
+        BMO re-renders the button with a random UUID ``id`` on every load and has changed its
+        attributes between builds, so a single locator goes stale silently. Fallbacks run
+        most- to least-specific; the last one is allowed to raise so the failure still names a
+        locator."""
+        *fallbacks, last = _SIGN_IN_LOCATORS
+        for locator in fallbacks:
+            try:
+                return self._find_element("click BMO sign-in button", By.XPATH, locator)
+            except ScraperError:
+                logger.info("BMO sign-in button not found via %s; trying the next locator", locator)
+        return self._find_element("click BMO sign-in button", By.XPATH, last)
 
     def _ensure_password_populated(self, password: SecretString) -> None:
         logger.info("Verifying BMO password field remains populated after cookie-banner handling")
