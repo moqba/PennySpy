@@ -3,6 +3,15 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.7.3] - 2026-08-23
+
+### Fixed
+
+- BMO sign-in no longer stalls on the login page. BMO dropped the `aria-label` the scraper keyed
+  on and gives the button a fresh random `id` on every render, so the click never landed. The
+  button is now found by the form's stable `name="login-submit"`, with the old label and the
+  visible "Sign in" text tried in turn if that markup changes again.
+
 ## [0.7.2] - 2026-08-07
 
 ### Added
