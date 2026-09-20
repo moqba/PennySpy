@@ -12,7 +12,9 @@ class ConnectionElementXpath(StrEnum):
 
 
 class ActivityElementXpath(StrEnum):
-    LOAD_MORE = '//button[@role="button" and .//span[normalize-space()="Load more"]]'
+    # The redesigned feed dropped the redundant role="button" this used to also require, so
+    # the visible label is all that is matched on.
+    LOAD_MORE = '//button[.//span[normalize-space()="Load more"]]'
 
 
 class AccountGraphXpath(StrEnum):
@@ -46,9 +48,26 @@ class ExportElementCss(StrEnum):
 
 
 class ExportElementXpath(StrEnum):
-    # The "All accounts" master checkbox is the only checkbox row without an account
-    # data-testid, so match it on its label instead.
+    """The export dialog's period dropdown and "All accounts" master checkbox.
+
+    The master checkbox is the only checkbox row without an account ``data-testid``, so it
+    can only be matched on its label. WS moved the label out of the control in the September
+    2026 redesign -- the row now reads "Accounts" / "All accounts" with the checkbox beside
+    it rather than wrapping it -- so it is looked for through a chain, most- to
+    least-specific, and treated as optional: ticking the per-account rows reaches the same
+    place (see ``Wealthsimple._select_all_export_accounts``).
+    """
+
+    # The control wraps its own label. WS's pre-redesign shape, kept first for older builds.
     ALL_ACCOUNTS_CHECKBOX = '//button[@role="checkbox" and .//p[normalize-space()="All accounts"]]'
+    # The control is named by ARIA rather than by a label it contains.
+    ALL_ACCOUNTS_BY_ARIA = '//*[(@role="checkbox" or @type="checkbox") and @aria-label="All accounts"]'
+    # The label and the control are siblings in one row: find the label, then the checkbox
+    # sharing its row. Two ancestor levels covers a label wrapped in its own cell.
+    ALL_ACCOUNTS_IN_ROW = (
+        '//*[normalize-space(text())="All accounts"]/ancestor::*[self::div or self::li][2]'
+        '//*[@role="checkbox" or @type="checkbox"]'
+    )
     # ``{label}`` is one of the ExportPeriod values. The role filter keeps the match off the
     # selector button's own text, which renders the current selection in a plain <p>.
     PERIOD_OPTION = '//*[(@role="option" or @role="menuitem" or self::li) and normalize-space()="{label}"]'
