@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import logging
 import re
 import time
 import zipfile
-from collections.abc import Sequence
+from collections.abc import Collection, Iterable, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Final
@@ -31,7 +30,7 @@ from pennyspy.scrapers.wealthsimple.account_earnings import (
     write_earnings_csv,
 )
 from pennyspy.scrapers.wealthsimple.activity_fields import ActivityField
-from pennyspy.scrapers.wealthsimple.activity_id import ActivityCss, ActivityXpath
+from pennyspy.scrapers.wealthsimple.activity_id import ActivityCss
 from pennyspy.scrapers.wealthsimple.connection_element_id import (
     AccountGraphXpath,
     ActivityElementXpath,
@@ -69,32 +68,20 @@ from pennyspy.scrapers.zen_scraper import (
 
 WEALTHSIMPLE_ROOT: Final[str] = "https://my.wealthsimple.com"
 
-_INVESTMENT_TYPES: frozenset[str] = frozenset(
-    {
-        "Limit buy",
-        "Limit sell",
-        "Market buy",
-        "Market sell",
-        "Fractional buy",
-        "Fractional sell",
-        "Dividend",
-        "Sold asset",
-    }
-)
-
-_SELF_NAMED_TYPES: frozenset[str] = frozenset(
-    {
-        "Interest",
-        "ATM fee reimbursement",
-        "Non-resident tax",
-        "Management fee",
-        "Recurring deposit",
-    }
-)
 WEALTHSIMPLE_LOGIN: Final[str] = f"{WEALTHSIMPLE_ROOT}/login"
 WEALTHSIMPLE_HOME: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/home"
 WEALTHSIMPLE_ACTIVITY: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/activity"
 WEALTHSIMPLE_ACCOUNT_DETAILS: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/account-details"
+
+# The export dialog's "All accounts" master checkbox, looked for through several locators
+# in turn: the control that wraps its own label (WS's pre-redesign shape), then the one
+# named by ARIA, then whatever checkbox shares a row with the label. None of them is
+# required -- see Wealthsimple._select_all_export_accounts.
+_ALL_ACCOUNTS_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
+    (By.XPATH, ExportElementXpath.ALL_ACCOUNTS_CHECKBOX),
+    (By.XPATH, ExportElementXpath.ALL_ACCOUNTS_BY_ARIA),
+    (By.XPATH, ExportElementXpath.ALL_ACCOUNTS_IN_ROW),
+)
 
 # The chart-toolbar tab that plots what the account was worth. Its sibling, "Returns", plots
 # WS's own return figure instead, which is not what the earnings series is built from.
@@ -104,6 +91,10 @@ ACCOUNT_VALUE_TAB: Final[str] = "Account value"
 # normalized CSV the scrape returns, so the download wait can treat the directory as
 # exclusively its own.
 _DOWNLOAD_SUBDIR: Final[str] = "ws_export"
+
+# A transfer's legs, which WS prefixes so each names the account it moves money between
+# rather than the kind of movement: "From: TFSA", "To: Chequing • Main".
+_TRANSFER_LEG: Final[re.Pattern[str]] = re.compile(r"^(From|To):\s*(.*)$")
 
 logger = logging.getLogger(__name__)
 
@@ -130,132 +121,135 @@ def _parse_header_date(text: str | None) -> datetime | None:
         return None
 
 
-def parse_button_texts(button_inner_html: str) -> list[str]:
-    """Extract non-empty button-header text values in document order.
+def parse_button_texts(button_outer_html: str) -> list[str]:
+    """The row header's text fields, in document order, status badge excluded.
 
-    Filters by data-fs-privacy-rule="unmask" so the status badge span
-    (e.g. "Pending", "In progress") is excluded — it never carries that attribute."""
-    soup = BeautifulSoup(button_inner_html, "html.parser")
-    return [
-        el.get_text(strip=True)
-        for el in soup.find_all(["p", "span"], {"data-fs-privacy-rule": "unmask"})
-        if el.get_text(strip=True)
-    ]
-
-
-def _extract_row_value(label_elem: Any) -> str | None:
-    """Return the value paired with a detail-row label element.
-
-    WS renders each detail row as two sibling cells inside a row container:
-    a label cell (holding the ``data-fs-privacy-rule="unmask"`` label) followed
-    by a value cell::
-
-        <div>                          <- row container
-          <div><span unmask>Account</span></div>          <- label cell
-          <div><span>Wealthsimple credit card</span></div><- value cell
-        </div>
-
-    The wrapping ``div`` class names are hashed by styled-components and change
-    on every WS deploy, so navigate by structure — the label cell's next
-    sibling ``div`` — instead of by class name."""
-    label_cell = label_elem.parent
-    if label_cell is None:
-        return None
-    value_cell = label_cell.find_next_sibling("div")
-    if value_cell is None:
-        return None
-    value_el = value_cell.find(["p", "span"])
-    text = (value_el.text if value_el else value_cell.get_text()).strip()
-    return text or None
+    Reads the leaf ``p``/``span`` nodes, skipping the leading icon span (and the ticker logo
+    or glyph inside it, which are ``aria-hidden``) and the status badge. The badge is the one
+    node WS still marks ``data-fs-privacy-rule="unmask"``: before the September 2026 redesign
+    the attribute marked every header field and the badge was the exception, so the same
+    attribute that used to *find* the fields is now only good for telling them apart from the
+    badge."""
+    button = _header_button(button_outer_html)
+    status_nodes = {id(node) for node in button.select(ActivityCss.ROW_STATUS)}
+    texts: list[str] = []
+    for el in button.find_all(["p", "span"]):
+        if el.find(["p", "span"]) or id(el) in status_nodes:
+            continue
+        if el.find_parent(attrs={"aria-hidden": "true"}):
+            continue
+        text = el.get_text(strip=True)
+        if text:
+            texts.append(text)
+    return texts
 
 
-def parse_region_html(region_inner_html: str) -> dict:
-    """Extract ActivityField values from the expanded region's innerHTML."""
-    soup = BeautifulSoup(region_inner_html, "html.parser")
+def _header_button(button_outer_html: str) -> Any:
+    """The ``<button>`` inside a row header's outerHTML, or the fragment itself."""
+    soup = BeautifulSoup(button_outer_html, "html.parser")
+    return soup.find("button") or soup
+
+
+def _transfer_leg(text: str) -> tuple[str, str] | None:
+    """``("From", "TFSA")`` for a transfer leg such as ``"From: TFSA"``, else None."""
+    match = _TRANSFER_LEG.match(text)
+    return (match.group(1), match.group(2).strip()) if match else None
+
+
+def account_names(activities: Iterable[dict]) -> set[str]:
+    """The names a batch of parsed rows used in their account slot.
+
+    This is the feed telling you its own account vocabulary, which is the only way to read a
+    row whose subtitle is two accounts rather than a type and an account -- see
+    :func:`parse_row_header`. The account slot is read the same way whether or not this set is
+    known, so a first pass without it still yields the names a second pass needs."""
+    return {account for activity in activities if (account := activity.get(ActivityField.ACCOUNT.value))}
+
+
+def parse_row_header(button_outer_html: str, known_accounts: Collection[str] = ()) -> dict:
+    """Extract ActivityField values from a collapsed row header.
+
+    A header is a title followed by a subtitle of one or two fields, and which of them holds
+    the transaction's type depends on the row:
+
+    - ``[payee, type, account]`` is the common case, and ``[ticker, type, account]`` the same
+      shape for a security.
+    - ``[type, "From: X", "To: Y"]`` and ``[type, "From: X", account]`` lead with the type.
+      WS prefixes the legs of a transfer, so those rows announce themselves.
+    - ``[type, account]`` is a row whose type names itself ("ATM fee reimbursement").
+    - ``[type, account, account]`` -- a "Cash back" moving money between two of your own
+      accounts -- also leads with the type, but nothing in the markup says so. It is
+      recognised by its first subtitle field being a name the feed used as an account
+      elsewhere on the page, which is what ``known_accounts`` carries. Without it the row
+      still parses, just with its payee and type the wrong way round.
+    """
+    button = _header_button(button_outer_html)
     activity: dict = {}
-    _synthetic = {ActivityField.TICKER, ActivityField.BUTTON_PAYEE, ActivityField.BUTTON_AMOUNT}
-    for label in ActivityField:
-        if label in _synthetic:
-            continue
-        label_elem = soup.find(
-            ["p", "span"],
-            {"data-fs-privacy-rule": "unmask"},
-            string=lambda s, lbl=label: s and s.strip() == lbl,
-        )
-        if not label_elem:
-            continue
-        value = _extract_row_value(label_elem)
-        if value is not None:
-            activity[label.value] = value
+
+    badge = button.select_one(ActivityCss.ROW_STATUS)
+    if badge and badge.get_text(strip=True):
+        activity[ActivityField.STATUS.value] = badge.get_text(strip=True)
+
+    texts = parse_button_texts(button_outer_html)
+    if texts and _looks_like_amount(texts[-1]):
+        activity[ActivityField.BUTTON_AMOUNT.value] = texts.pop()
+
+    title, subtitle = (texts[0], texts[1:]) if texts else ("", [])
+
+    legs: dict[str, str] = {}
+    plain: list[str] = []
+    for field in subtitle:
+        leg = _transfer_leg(field)
+        if leg:
+            legs[leg[0]] = leg[1]
+        else:
+            plain.append(field)
+
+    account = plain[-1] if plain else legs.get("To", "")
+    # The subtitle leads with the type, unless the row led with it instead: a transfer leg
+    # names an account rather than a type, and so does a field the feed used as an account
+    # somewhere else.
+    type_ = plain[0] if len(plain) > 1 else ""
+    if type_ in known_accounts:
+        type_ = ""
+    if not type_:
+        type_, title = title, ""
+
+    if type_:
+        activity[ActivityField.TYPE.value] = type_
+    if account:
+        activity[ActivityField.ACCOUNT.value] = account
+    if "From" in legs:
+        activity[ActivityField.FROM.value] = legs["From"]
+    if "To" in legs:
+        activity[ActivityField.TO.value] = legs["To"]
+    if title:
+        # A security's logo carries the ticker as its accessible name, and only a security
+        # has one, so its presence is what separates a row titled with a ticker from one
+        # titled with a payee.
+        field_ = ActivityField.TICKER if button.select_one(ActivityCss.ROW_TICKER_LOGO) else ActivityField.BUTTON_PAYEE
+        activity[field_.value] = title
+
     return activity
 
 
 def build_activity_row(
-    button_inner_html: str, region_inner_html: str, header_date: datetime | None = None
+    button_outer_html: str,
+    header_date: datetime | None = None,
+    known_accounts: Collection[str] = (),
 ) -> dict | None:
-    """Full per-transaction parse: region fields + button-header enrichment, with Cancelled-skip.
+    """Full per-transaction parse of one collapsed activity row.
 
-    ``header_date`` is the transaction's day-header date (from the activity feed's
-    ``<h3>`` grouping). It's used as a fallback for the ``Date`` field, which some
-    transaction types (e.g. credit-card purchases) omit from their expanded region.
+    ``header_date`` is the day-header (``<h3>``) the row sits under, and is the only date the
+    feed offers now that rows are read without being expanded.
 
     Returns None if the row should be dropped (Cancelled status)."""
-    activity = parse_region_html(region_inner_html)
+    activity = parse_row_header(button_outer_html, known_accounts)
     if activity.get(ActivityField.STATUS.value) == "Cancelled":
         return None
-    if not activity.get(ActivityField.DATE.value) and header_date is not None:
+    if header_date is not None:
         activity[ActivityField.DATE.value] = header_date.strftime("%B %d, %Y")
-    meta = _parse_button_header(parse_button_texts(button_inner_html))
-    if meta.get("ticker") and not activity.get(ActivityField.TICKER.value):
-        activity[ActivityField.TICKER.value] = meta["ticker"]
-    if meta.get("payee") and not activity.get(ActivityField.BUTTON_PAYEE.value):
-        activity[ActivityField.BUTTON_PAYEE.value] = meta["payee"]
-    if meta.get("type") and not activity.get(ActivityField.TYPE.value):
-        activity[ActivityField.TYPE.value] = meta["type"]
-    if meta.get("button_amount") and not activity.get(ActivityField.BUTTON_AMOUNT.value):
-        activity[ActivityField.BUTTON_AMOUNT.value] = meta["button_amount"]
     return activity or None
-
-
-def _parse_button_header(texts: list[str]) -> dict:
-    """Extract ticker, transaction type, payee, and amount from button header <p> texts.
-
-    Button text patterns observed in the wild:
-      n=5: [ticker, ticker2, type, account, amount]  e.g. ['AMD', 'AMD', 'Limit buy', 'TFSA', '$516']
-      n=4: [ticker, type, account, amount]            e.g. ['VFV', 'Fractional sell', 'TFSA', '$4k']
-        or [payee,  type, account, amount]            e.g. ['Landlord', 'Interac e-Transfer', ...]
-      n=3: [type,   account, amount]                  e.g. ['Interest', 'Chequing • Main', '$1']
-        or [ticker, type,    account]  (no amount yet) e.g. ['GE', 'Dividend', 'TFSA']
-    """
-    result: dict = {}
-    n = len(texts)
-
-    # Extract amount from the last element if it looks like a currency value
-    if texts and _looks_like_amount(texts[-1]):
-        result["button_amount"] = texts[-1]
-
-    if n >= 5:
-        result["ticker"] = texts[0]
-        result["type"] = texts[2]
-    elif n == 4:
-        if texts[1].startswith("From:") or texts[1].startswith("To:"):
-            result["type"] = "Transfer"
-        else:
-            result["type"] = texts[1]
-            if texts[1] in _INVESTMENT_TYPES:
-                result["ticker"] = texts[0]
-            else:
-                result["payee"] = texts[0]
-    elif n == 3:
-        if texts[0] in _SELF_NAMED_TYPES:
-            result["type"] = texts[0]
-        elif texts[1] in _INVESTMENT_TYPES:
-            result["ticker"] = texts[0]
-            result["type"] = texts[1]
-        else:
-            result["type"] = texts[0]
-
-    return result
 
 
 def _looks_like_amount(text: str) -> bool:
@@ -321,12 +315,24 @@ class Wealthsimple(ZenBankScraper):
             downloads = self._export_activity_csvs(
                 since_date=since_date, download_directory=export_directory / _DOWNLOAD_SUBDIR
             )
-        except ScraperError as e:
+        except ScraperError as export_error:
             # The export dialog is a recent WS addition; a missing step degrades the scrape
             # to the previous activity-feed parsing rather than failing it.
-            logger.warning("Wealthsimple CSV export was unavailable (%s); falling back to activity-feed scraping", e)
+            logger.warning(
+                "Wealthsimple CSV export was unavailable (%s); falling back to activity-feed scraping",
+                export_error,
+            )
             self._save_screenshot("wealthsimple_csv_export_unavailable")
-            downloads = [self._write_scraped_activity(export_directory=export_directory, since_date=since_date)]
+            try:
+                downloads = [self._write_scraped_activity(export_directory=export_directory, since_date=since_date)]
+            except Exception as fallback_error:
+                # Both routes failed. Report them together: only the fallback's message
+                # reaches the web UI (router.py hands `str(e)` straight to the HTTP detail),
+                # and on its own it points diagnosis at the wrong half of the scrape.
+                raise ScraperError(
+                    "Wealthsimple returned no activity. The CSV export failed "
+                    f"({export_error}), and reading the activity feed instead failed ({fallback_error})"
+                ) from fallback_error
         else:
             downloads = split_exports_by_account_type(downloads)
 
@@ -667,6 +673,7 @@ class Wealthsimple(ZenBankScraper):
             "find the Wealthsimple 'Download activities' button",
             clickable(By.CSS_SELECTOR, ExportElementCss.DOWNLOAD_ACTIVITIES),
             DelaySeconds.PAGE_LOADING,
+            screenshot_name="wealthsimple_download_activities_missing",
             timeout_log_level=logging.INFO,
         )
         self._set_download_directory(download_directory)
@@ -789,16 +796,18 @@ class Wealthsimple(ZenBankScraper):
         return int(counts[0]), int(counts[1])
 
     def _select_all_export_accounts(self) -> int:
-        """Tick the "All accounts" master checkbox, falling back to per-account rows.
+        """Tick every account in the export's account-selection step.
 
-        Returns how many accounts ended up selected — the number of CSVs the export is
-        expected to produce (0 when the rows never rendered)."""
-        all_accounts = self._wait_until(
-            "find the Wealthsimple export 'All accounts' checkbox",
-            clickable(By.XPATH, ExportElementXpath.ALL_ACCOUNTS_CHECKBOX),
-            DelaySeconds.EXPORT_STEP,
-            screenshot_name="wealthsimple_export_all_accounts_missing",
-        )
+        The "All accounts" master checkbox is the fast path, not a requirement. WS moved its
+        label out of the control in the September 2026 redesign -- the row reads "Accounts" /
+        "All accounts" with the checkbox beside it rather than wrapping it -- and a build that
+        hides it behind markup no locator here matches can still be satisfied by ticking the
+        rows themselves. Returns how many accounts ended up selected, which is how many CSVs
+        the export is expected to produce."""
+        all_accounts = self._await_account_step()
+        if all_accounts is None:
+            return self._select_export_accounts_individually()
+
         if all_accounts.get_attribute("aria-checked") != "true":
             self._click("select all Wealthsimple accounts for export", all_accounts)
 
@@ -815,22 +824,74 @@ class Wealthsimple(ZenBankScraper):
                 DelaySeconds.EXPORT_STEP,
                 timeout_log_level=logging.INFO,
             )
-            total, _ = self._export_account_counts()
-            logger.info("Selected all %d Wealthsimple account(s) for export", total)
-            return total
         except TimeoutException:
             total, unchecked = self._export_account_counts()
+            if not total:
+                # The rows are on screen -- "All accounts" was found among them -- but they
+                # carry no data-testid this scraper recognises, so the selection cannot be
+                # read back. The click stands, and the export goes ahead on it: the count is
+                # only a hint to the download wait, which takes 0 as "however many arrive".
+                # Refusing here would fail an export that is, as far as anything can tell,
+                # correctly set up.
+                # The master checkbox's own state is the only readback left. It is not proof
+                # that every account is ticked, but it does say whether the click landed.
+                ticked = all_accounts.get_attribute("aria-checked") == "true"
+                logger.warning(
+                    "Wealthsimple's export dialog exposed no readable account rows; proceeding on the "
+                    "'All accounts' click with no confirmed account count ('All accounts' now reads %s)",
+                    "checked" if ticked else "unchecked",
+                )
+                self._save_screenshot("wealthsimple_export_accounts_unreadable")
+                return 0
             logger.info(
-                "'All accounts' left %d of %d Wealthsimple account row(s) unticked — selecting them individually",
+                "'All accounts' left %d of %d Wealthsimple account row(s) unticked - selecting them individually",
                 unchecked,
                 total,
             )
+            return self._select_export_accounts_individually()
 
+        total, _ = self._export_account_counts()
+        logger.info("Selected all %d Wealthsimple account(s) for export", total)
+        return total
+
+    def _await_account_step(self) -> ElementHandle | None:
+        """Wait for the account-selection step, returning its master checkbox if it has one.
+
+        The rows are waited for in the same breath as the checkbox, which is what keeps a
+        build without a master checkbox from costing a full timeout on every scrape: the step
+        is ready as soon as either appears. Only when neither does is this a real failure."""
+        found: list[tuple[str, ElementHandle]] = []
+
+        def step_ready(_driver: Any) -> bool | None:
+            match = self._first_displayed_match(_ALL_ACCOUNTS_LOCATORS)
+            if match:
+                found.append(match)
+                return True
+            return True if self._export_account_rows() else None
+
+        self._wait_until(
+            "find the Wealthsimple export account-selection step",
+            step_ready,
+            DelaySeconds.EXPORT_STEP,
+            screenshot_name="wealthsimple_export_accounts_missing",
+        )
+        if not found:
+            logger.info("This Wealthsimple build shows no master checkbox; selecting the account rows instead")
+            return None
+        locator, element = found[0]
+        logger.info("Found the Wealthsimple export 'All accounts' checkbox via %s", locator)
+        return element
+
+    def _select_export_accounts_individually(self) -> int:
+        """Tick each selectable account row, and confirm none was left behind."""
         for index, row in enumerate(self._export_account_rows()):
             if row.get_attribute("aria-checked") == "true":
                 continue
             self._click(f"select Wealthsimple export account row {index}", row, paced=False)
         total, unchecked = self._export_account_counts()
+        if not total:
+            self._save_screenshot("wealthsimple_export_accounts_missing")
+            raise TimeoutException("The Wealthsimple export dialog offered no selectable account rows")
         if unchecked:
             self._save_screenshot("wealthsimple_export_accounts_unselected")
             raise TimeoutException(
@@ -888,30 +949,65 @@ class Wealthsimple(ZenBankScraper):
 
     def fetch_activity(self, since_date: datetime | None = None) -> DataFrame:
         self.open_activity()
-        return self._expand_and_get_all_activity(since_date=since_date)
+        return self._read_activity_rows(since_date=since_date)
 
     def open_activity(self):
         self._navigate("open Wealthsimple activity page", WEALTHSIMPLE_ACTIVITY)
-        # Wait for header buttons rather than the "Load more" button: short histories
-        # legitimately have no "Load more" at all.
+        # Two waits, because the page arrives in two pieces. This one is for the shell:
+        # either the export button or the activity column proves the page itself rendered, so
+        # one of them drifting does not take the check down with it. Neither says anything
+        # about the rows, which is what the second wait is for.
+        self._wait_until(
+            "load the Wealthsimple activity page",
+            self._activity_page_rendered,
+            DelaySeconds.PAGE_LOADING,
+            screenshot_name="wealthsimple_activity_page_timeout",
+        )
+        self._await_activity_rows()
+
+    def _await_activity_rows(self) -> int:
+        """Wait for the feed's rows, and report how many turned up.
+
+        The page shell renders before the rows inside it do -- it is served while the feed is
+        still being fetched -- so the shell alone is not something to snapshot against, and
+        reading it too early is indistinguishable from reading an account that has no
+        activity. Never seeing a row is still not a failure: a window you had no activity in
+        genuinely has none to show, and that must come back as an empty export rather than as
+        a failed scrape. The two cases are told apart in the log and in a screenshot instead
+        of by raising."""
         try:
             self._wait_until(
-                "load Wealthsimple activity header buttons",
-                present(By.CSS_SELECTOR, ActivityCss.HEADER_BUTTON),
+                "load the Wealthsimple activity rows",
+                lambda _driver: self._count_rows() or None,
                 DelaySeconds.PAGE_LOADING,
-                screenshot_name="wealthsimple_activity_headers_timeout",
+                timeout_log_level=logging.INFO,
             )
-        except TimeoutException as e:
-            raise TimeoutException("Couldn't find any activity header buttons") from e
+        except TimeoutException:
+            logger.info("No Wealthsimple activity rows appeared; reading the feed as empty")
+            self._save_screenshot("wealthsimple_activity_feed_empty")
+            return 0
+        count = self._count_rows()
+        logger.info("Wealthsimple activity feed rendered %d row(s)", count)
+        return count
+
+    def _activity_page_rendered(self, _driver: Any) -> bool | None:
+        rendered = self.driver.execute_script(
+            f"return !!(document.querySelector('{ExportElementCss.DOWNLOAD_ACTIVITIES}')\n"
+            f"       || document.querySelector('{ActivityCss.PAGE_ROOT}'));"
+        )
+        return True if rendered else None
 
     def _get_oldest_visible_activity_date(self) -> datetime | None:
-        headers = self.driver.find_elements(By.XPATH, ActivityXpath.DATE_HEADER)
+        headers = self.driver.find_elements(By.CSS_SELECTOR, ActivityCss.DATE_HEADER)
         if not headers:
             return None
         return _parse_header_date(headers[-1].text)
 
-    def _count_header_buttons(self) -> int:
-        count = self.driver.execute_script(f"return document.querySelectorAll('{ActivityCss.HEADER_BUTTON}').length;")
+    def _count_rows(self) -> int:
+        count = self.driver.execute_script(
+            f"return Array.from(document.querySelectorAll('{ActivityCss.ACCORDION_BUTTON}'))\n"
+            f"  .filter(el => el.querySelector('{ActivityCss.ROW_ICON}')).length;"
+        )
         return int(count or 0)
 
     def _load_more_until(self, since_date: datetime) -> None:
@@ -922,119 +1018,67 @@ class Wealthsimple(ZenBankScraper):
             load_more = self.driver.find_elements(By.XPATH, ActivityElementXpath.LOAD_MORE)
             if not load_more:
                 break
-            prev_count = self._count_header_buttons()
+            prev_count = self._count_rows()
             self._click("click Wealthsimple Load more button", load_more[0], paced=False)
             self._wait_until(
                 "load more Wealthsimple activity rows",
-                lambda d: self._count_header_buttons() > prev_count,
+                lambda d: self._count_rows() > prev_count,
                 DelaySeconds.PAGE_LOADING,
                 screenshot_name="wealthsimple_load_more_timeout",
             )
 
-    def _snapshot_rows(self) -> list[tuple[str, bool, datetime | None]]:
-        """One DOM pass over date headers and accordion header buttons, in document order.
+    def _snapshot_rows(self) -> list[tuple[str, datetime | None]]:
+        """One DOM pass over the feed: each row header's HTML with the day it sits under.
 
-        Returns ``(region_id, is_expanded, date)`` per activity row. A ``None`` date
-        (unparseable or no header seen yet) means the row is treated as in range."""
+        Day headers and row headers are collected in a single document-order query and walked
+        together, so every row inherits the ``<h3>`` above it. The accordion buttons that fail
+        the icon test belong to the Filters rail, not to the feed.
+
+        The whole row is read from its collapsed header. WS's September 2026 rebuild moved the
+        feed onto Base UI accordions, which only mount a panel -- and only then link it with
+        ``aria-controls`` -- once it has been opened, so a closed row offers no id to address
+        it by; the same rebuild put payee, type, account, amount and status into the header
+        itself, which is what makes expanding every row unnecessary rather than merely
+        awkward."""
         raw: list[list] = (
             self.driver.execute_script(
                 "const nodes = document.querySelectorAll("
-                f"'h3[data-fs-privacy-rule=\"unmask\"], {ActivityCss.HEADER_BUTTON}');\n"
+                f"'{ActivityCss.DATE_HEADER}, {ActivityCss.ACCORDION_BUTTON}');\n"
                 "const out = [];\n"
                 "let currentDate = null;\n"
                 "for (const node of nodes) {\n"
                 "  if (node.tagName === 'H3') { currentDate = node.textContent.trim(); continue; }\n"
-                "  out.push([node.getAttribute('aria-controls'),\n"
-                "            node.getAttribute('aria-expanded') === 'true', currentDate]);\n"
+                f"  if (!node.querySelector('{ActivityCss.ROW_ICON}')) continue;\n"
+                "  out.push([node.outerHTML, currentDate]);\n"
                 "}\n"
                 "return out;"
             )
             or []
         )
-        rows: list[tuple[str, bool, datetime | None]] = []
-        for region_id, expanded, date_text in raw:
-            if not region_id:
-                continue
-            rows.append((region_id, bool(expanded), _parse_header_date(date_text)))
-        return rows
+        return [(header_html, _parse_header_date(date_text)) for header_html, date_text in raw if header_html]
 
-    def _expand_rows(self, rows: list[tuple[str, bool, datetime | None]], since_date: datetime | None) -> list[str]:
-        """Expand every collapsed in-range row and return the region ids to harvest.
-
-        Rows are addressed by their stable ``aria-controls`` id, never by list position,
-        so expansion mutating the DOM cannot shift a click onto another button."""
-        kept: list[str] = []
-        for region_id, expanded, row_date in rows:
-            if since_date and row_date is not None and row_date < since_date:
-                continue
-            kept.append(region_id)
-            if expanded:
-                continue
-            try:
-                button = self._find_element(
-                    f"expand Wealthsimple activity region {region_id}",
-                    By.CSS_SELECTOR,
-                    ActivityCss.HEADER_BUTTON_FOR_REGION.format(region_id=region_id),
-                )
-                # Re-check right before clicking: clicking an already-expanded row collapses it.
-                if button.get_attribute("aria-expanded") == "true":
-                    continue
-                self._click(f"expand Wealthsimple activity region {region_id}", button, paced=False)
-                # Wait for region content to render, not just element presence —
-                # "In progress" transactions have a lazily-populated region.
-                self._wait_until(
-                    f"render Wealthsimple activity details for region {region_id}",
-                    present(
-                        By.XPATH,
-                        f'//*[@id="{region_id}"]//*[(self::p or self::span) and @data-fs-privacy-rule="unmask"]',
-                    ),
-                    DelaySeconds.ROW_RENDER,
-                    timeout_log_level=logging.INFO,
-                )
-            except Exception as e:
-                logger.exception("Failed to expand activity %s: %s", region_id, e)
-        return kept
-
-    def _harvest_rows(self, region_ids: list[str]) -> list[tuple[str, str | None, str | None]]:
-        """Read every expanded row's button + region innerHTML in one batch DOM pass.
-
-        Single JS call instead of two CDP round trips per row. The payload carries the
-        HTML of all rows at once; chunk the id list (~50 per call) if multi-year
-        ``since_date`` ranges ever make it too large."""
-        if not region_ids:
-            return []
-        raw: list[list] = (
-            self.driver.execute_script(
-                f"const ids = {json.dumps(region_ids)};\n"
-                "const out = [];\n"
-                "for (const id of ids) {\n"
-                "  const region = document.getElementById(id);\n"
-                "  const button = document.querySelector('button[aria-controls=' + JSON.stringify(id) + ']');\n"
-                "  out.push([id, button ? button.innerHTML : null, region ? region.innerHTML : null]);\n"
-                "}\n"
-                "return out;"
-            )
-            or []
-        )
-        return [(region_id, button_html, region_html) for region_id, button_html, region_html in raw]
-
-    def _expand_and_get_all_activity(self, since_date: datetime | None = None) -> DataFrame:
+    def _read_activity_rows(self, since_date: datetime | None = None) -> DataFrame:
         if since_date:
             self._load_more_until(since_date)
 
-        snapshot = self._snapshot_rows()
-        date_by_region = {region_id: row_date for region_id, _, row_date in snapshot}
-        region_ids = self._expand_rows(snapshot, since_date)
+        snapshot = [
+            (header_html, row_date)
+            for header_html, row_date in self._snapshot_rows()
+            if not (since_date and row_date is not None and row_date < since_date)
+        ]
+        # Parsed twice on purpose. A row whose subtitle names two accounts rather than a type
+        # and an account can only be told apart from an ordinary one by the account names the
+        # rest of the feed used, and those are not known until every row has been read once.
+        first_pass = [parse_row_header(header_html) for header_html, _ in snapshot]
+        known = account_names(first_pass)
 
         rows: list[dict] = []
-        for region_id, button_html, region_html in self._harvest_rows(region_ids):
-            if not button_html or not region_html:
-                logger.warning("Missing HTML for Wealthsimple activity region %s — skipping", region_id)
-                continue
-            activity = build_activity_row(button_html, region_html, header_date=date_by_region.get(region_id))
+        for header_html, row_date in snapshot:
+            activity = build_activity_row(header_html, header_date=row_date, known_accounts=known)
             if activity:
                 rows.append(activity)
 
+        logger.info("Read %d Wealthsimple activity row(s) from the feed", len(rows))
         return DataFrame(rows, columns=[field.value for field in ActivityField])
 
     def _login(self, username: SecretString, password: SecretString):

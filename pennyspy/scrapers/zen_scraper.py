@@ -27,7 +27,7 @@ import shutil
 import tempfile
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TypeVar, cast
@@ -427,6 +427,29 @@ class ZenScraper:
                 raise TimeoutException(f"Timed out while {description} after {timeout}s")
             time.sleep(0.3)
 
+    # ── locator chains ─────────────────────────────────────────────────────────────────
+
+    def _first_displayed_match(self, locators: Sequence[tuple[str, str]]) -> tuple[str, ElementHandle] | None:
+        """First enabled, on-screen element matching any of ``locators``, with the one that found it.
+
+        ``locators`` are ``(by, locator)`` pairs tried in order, so an earlier (more specific)
+        one always wins over a later fallback. This is how a scraper survives a bank reskinning
+        one attribute at a time: the stable attribute goes first, then the ARIA structure, then
+        the visible label text. Elements the page keeps mounted but hidden -- a previous wizard
+        step, a cookie preference centre -- are skipped rather than clicked into the void.
+
+        ``BMOBank`` still carries its own XPath-only version of this, which predates the
+        shared one; collapsing it onto this belongs in a change of its own, since its
+        locator chains are asserted on directly by the BMO 2FA tests.
+        """
+        for by, locator in locators:
+            for element in self.driver.find_elements(by, locator):
+                if element.get_attribute("disabled") is not None:
+                    continue
+                if element.is_displayed():
+                    return locator, element
+        return None
+
     # ── page scripts ─────────────────────────────────────────────────────────────────
 
     def _add_init_script(self, description: str, source: str) -> None:
@@ -500,6 +523,22 @@ class ZenScraper:
         except Exception as e:
             raise ScraperError(f"Failed while {description}") from e
         logger.info("Completed action: %s", description)
+
+    def _click_via_dom(self, description: str, element: ElementHandle, *, paced: bool = True) -> None:
+        """Activate ``element`` through the DOM instead of by moving the mouse to it.
+
+        A synthetic mouse click goes to whatever sits topmost at the element's coordinates, so a
+        consent banner or a modal drifting over the target swallows it silently. Dispatching the
+        element's own click reaches the control itself — but the event it raises is untrusted, and
+        a site that fingerprints interaction can tell. It is a fallback for a click the page has
+        shown didn't take, never the first thing to try."""
+        logger.info("Starting action: %s (DOM click)", description)
+        try:
+            self._run(element._el.apply("(el) => el.click()"))
+            self._action_delay(paced=paced)
+        except Exception as e:
+            raise ScraperError(f"Failed while {description} (DOM click)") from e
+        logger.info("Completed action: %s (DOM click)", description)
 
     async def _click_async(self, element: ElementHandle, human: bool) -> None:
         el = element._el

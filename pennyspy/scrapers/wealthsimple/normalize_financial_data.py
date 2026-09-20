@@ -58,19 +58,22 @@ def _normalize_row(row: pd.Series, tx_type: str) -> dict | None:
 
 
 def _normalize_trade(row: pd.Series, tx_type: str) -> dict | None:
-    date = _get(row, "Filled") or _get(row, "Submitted")
+    # Filled and Submitted are fields of a row's expanded panel. The activity feed is read
+    # from its collapsed headers, which carry only the day header's date, so falling back to
+    # Date is what keeps trades in the output at all rather than dropping every one of them
+    # for want of a timestamp.
+    date = _get(row, "Filled") or _get(row, "Submitted") or _get(row, "Date")
     if not date:
         return None
 
     ticker = _get(row, "Ticker")
     account = _get(row, "Account")
 
+    # Quantity and limit price live in that panel too; with neither, the note is the bare type.
     qty = _get(row, "Entered quantity") or _get(row, "Filled quantity")
     limit = _get(row, "Limit price")
-    if limit:
-        notes = f"{tx_type} {qty} @ {limit}".strip()
-    else:
-        notes = f"{tx_type} {qty}".strip()
+    detail = " ".join(part for part in (qty, f"@ {limit}" if limit else "") if part)
+    notes = f"{tx_type} {detail}" if detail else tx_type
 
     if tx_type in BUY_TYPES:
         raw = _get(row, "Total cost") or _get(row, "Estimated total cost") or _get(row, "Button amount")
@@ -120,6 +123,9 @@ def _normalize_transfer(row: pd.Series, tx_type: str) -> dict | None:
         payee = from_
     elif to and to not in INTERNAL_ACCOUNTS:
         payee = to
+    # From and To are expanded-panel fields; a row read from its collapsed header names the
+    # counterparty in its title instead.
+    payee = payee or _get(row, "Button payee")
 
     account = _get(row, "Account")
     if not account:
@@ -128,7 +134,7 @@ def _normalize_transfer(row: pd.Series, tx_type: str) -> dict | None:
         elif from_ in INTERNAL_ACCOUNTS - {""}:
             account = from_
 
-    amount = parse_amount(_get(row, "Amount"))
+    amount = parse_amount(_get(row, "Amount") or _get(row, "Button amount"))
     return {"Date": date, "Payee": payee, "Account": account, "Notes": tx_type, "Amount": amount}
 
 

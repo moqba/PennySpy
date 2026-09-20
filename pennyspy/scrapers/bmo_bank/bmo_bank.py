@@ -6,16 +6,17 @@ import logging
 import re
 import secrets
 import zipfile
+from collections.abc import Callable
 from datetime import datetime
 from http import HTTPStatus
 from pathlib import Path
-from time import sleep
+from time import monotonic, sleep
 from typing import Any, Final, Literal, cast
 
 import requests
 
 from pennyspy.scrapers.base import AuthStep, ZenBankScraper
-from pennyspy.scrapers.bmo_bank.connection_element_id import ConnectionElementId
+from pennyspy.scrapers.bmo_bank.connection_element_id import PHONE_METHOD_WORDS, ConnectionElementId
 from pennyspy.scrapers.bmo_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.bmo_bank.get_default_filename import get_default_filename
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
@@ -32,7 +33,6 @@ from pennyspy.scrapers.zen_scraper import (
     invisible,
     present,
     url_to_be,
-    visible,
 )
 
 BMO_LOGIN_URL: Final[str] = "https://www1.bmo.com/banking/digital/login"
@@ -47,9 +47,7 @@ _AMOUNT_HEADERS: Final[frozenset[str]] = frozenset({"Money in/out", "Money out",
 # "1-20 of 126" style pagination range label.
 _RANGE_LABEL_RE: Final[re.Pattern[str]] = re.compile(r"(\d[\d,]*)\s*-\s*(\d[\d,]*)\s+of\s+(\d[\d,]*)")
 # Trailing UUID of an /account-details/{ba,cc}/{uuid} href.
-_ACCOUNT_HREF_RE: Final[re.Pattern[str]] = re.compile(
-    r"/account-details/(?:ba|cc)/([0-9a-fA-F-]+)"
-)
+_ACCOUNT_HREF_RE: Final[re.Pattern[str]] = re.compile(r"/account-details/(?:ba|cc)/([0-9a-fA-F-]+)")
 # Hard cap on pagination so a pager that stops advancing can never spin the request forever.
 _MAX_PAGINATION_PAGES: Final[int] = 60
 # Sign-in button locators, most- to least-specific (see BMOBank._find_sign_in_button).
@@ -62,7 +60,88 @@ _SIGN_IN_LOCATORS: Final[tuple[str, ...]] = (
 # (name, type and masked number) can't grow the path past what the filesystem accepts.
 _MAX_ACCOUNT_SLUG_CHARS: Final[int] = 40
 
+# ── 2FA locator chains ───────────────────────────────────────────────────────────────
+# Every step of BMO's OTP flow is looked for through several locators in turn, most- to
+# least-specific: the stable ``name`` attribute first, then the component/ARIA structure, then
+# the visible text. None of them keys on an id — BMO stamps a fresh UUID on each render — and
+# each click is verified against the DOM afterwards rather than assumed to have landed.
+_MFA_SCREEN_LOCATORS: Final[tuple[str, ...]] = (
+    ConnectionElementId.MFA_METHOD_STEP,
+    ConnectionElementId.OTP_STEP,
+    ConnectionElementId.MFA_NEXT_BUTTON,
+)
+_MFA_PHONE_CHOICE_LOCATORS: Final[tuple[str, ...]] = (
+    ConnectionElementId.MFA_PHONE_RADIO_LABEL,
+    ConnectionElementId.MFA_PHONE_RADIO_VALUE_LABEL,
+    ConnectionElementId.MFA_PHONE_RADIO_LABEL_ANYWHERE,
+    ConnectionElementId.MFA_PHONE_RADIO_VALUE,
+    ConnectionElementId.MFA_CONTACT_RADIO_LABEL,
+    ConnectionElementId.MFA_CONTACT_RADIO,
+)
+_MFA_AGREE_CHECKBOX_LOCATORS: Final[tuple[str, ...]] = (
+    ConnectionElementId.MFA_AGREE_CHECKBOX_LABEL,
+    ConnectionElementId.MFA_AGREE_CHECKBOX_LABEL_BY_ID,
+    ConnectionElementId.MFA_AGREE_CHECKBOX_LABEL_BY_TEXT,
+)
+_MFA_SEND_CODE_LOCATORS: Final[tuple[str, ...]] = (
+    ConnectionElementId.MFA_SEND_CODE,
+    ConnectionElementId.MFA_SEND_CODE_BY_NAME,
+    ConnectionElementId.MFA_SEND_CODE_BY_TEXT,
+)
+_OTP_INPUT_LOCATORS: Final[tuple[str, ...]] = (
+    ConnectionElementId.OTP_INPUT,
+    ConnectionElementId.OTP_INPUT_BY_NAME,
+    ConnectionElementId.OTP_INPUT_BY_ID,
+    ConnectionElementId.OTP_INPUT_BY_FORM_CONTROL,
+    ConnectionElementId.OTP_INPUT_NUMERIC,
+)
+_MFA_CONFIRM_LOCATORS: Final[tuple[str, ...]] = (
+    ConnectionElementId.MFA_CONFIRM,
+    ConnectionElementId.MFA_CONFIRM_BY_NAME,
+    ConnectionElementId.MFA_CONFIRM_BY_TEXT,
+)
+_MFA_CONTINUE_LOCATORS: Final[tuple[str, ...]] = (
+    ConnectionElementId.MFA_CONTINUE,
+    ConnectionElementId.MFA_CONTINUE_BY_TEXT,
+)
+# How long a click gets to show up in the DOM before it is treated as one that never landed.
+_CLICK_CONFIRM_SECONDS: Final[float] = 2.0
+# A delivery option BMO masks rather than spells out: "••• - ••• - 7770", "xxx-xxx-7770".
+_MASKED_NUMBER_RE: Final[re.Pattern[str]] = re.compile(r"[•*x·]{2,}[\s\-–—.]*[•*x·]{2,}", re.IGNORECASE)
+# Reads the delivery option the OTP form currently has selected, as its label text (falling back
+# to the radio's value). The design system hides the real radio behind its label, so the checked
+# state has to come from the live DOM property; it is never written back into the markup.
+_JS_SELECTED_OTP_METHOD: Final[str] = r"""
+const radio = document.querySelector("input[type='radio']:checked");
+if (!radio) return null;
+const label = radio.labels && radio.labels.length ? radio.labels[0].innerText : "";
+return (label || radio.value || "selected").replace(/\s+/g, " ").trim();
+"""
+
 logger = logging.getLogger(__name__)
+
+
+def _locator_name(locator: str) -> str:
+    """A locator's constant name, for logs: the case-folding XPaths run to hundreds of characters."""
+    try:
+        return ConnectionElementId(locator).name
+    except ValueError:
+        return locator
+
+
+def _is_phone_delivery_method(label: str) -> bool:
+    """Whether a BMO delivery option sends the code to a phone.
+
+    Matched on what the option says, because BMO has worded it differently between builds and
+    offers other methods (email today, an app prompt tomorrow) in the same list. An option that
+    names an address is an email one however it is worded; an option that shows nothing but a
+    masked number is a phone one even when the wording is new."""
+    lowered = label.casefold()
+    if "@" in lowered:
+        return False
+    if any(word in lowered for word in PHONE_METHOD_WORDS):
+        return True
+    return bool(_MASKED_NUMBER_RE.search(label))
 
 
 class BMOBank(ZenBankScraper):
@@ -232,41 +311,98 @@ class BMOBank(ZenBankScraper):
     # ── Internal implementation ────────────────────────────────────────
 
     def _complete_2fa(self, otp_code: str) -> None:
-        """Complete the 2FA UI flow. Does NOT capture cookies or quit the driver."""
+        """Type the code into BMO's "Enter your code" step and confirm it.
+
+        Does NOT capture cookies or quit the driver."""
         logger.info("Entering OTP code")
         try:
-            otp_field = self._wait_until(
-                "find visible BMO OTP input field",
-                visible(By.XPATH, ConnectionElementId.OTP_INPUT),
+            locator, otp_field = self._wait_for_any(
+                "find the visible BMO OTP input field",
+                _OTP_INPUT_LOCATORS,
                 DelaySeconds.MFA_STEP_TIMEOUT,
             )
         except TimeoutException as e:
             raise TimeoutException("Couldn't find OTP input field while completing BMO 2FA") from e
+        logger.info("Found the BMO OTP input field via %s", _locator_name(locator))
         self._send_keys_verified("enter BMO OTP code", otp_field, otp_code, sensitive=True)
 
+        self._leave_this_device_untrusted()
+
+        # human=True: the post-OTP confirm is the most heavily fingerprinted click of the login —
+        # give it real pointer movement + dwell rather than a bare synthetic click.
+        self._click_first_match(
+            "the BMO OTP confirm button",
+            _MFA_CONFIRM_LOCATORS,
+            DelaySeconds.MFA_STEP_TIMEOUT,
+        )
+        self._finish_post_otp_navigation()
+
+    def _leave_this_device_untrusted(self) -> None:
+        """Make sure BMO's "Trust this device" box is clear before the code is confirmed.
+
+        Ticking it registers this machine with BMO and skips 2FA on later logins, which is not
+        the scraper's call to make — so the box is never clicked, only read back, and unticked
+        again if a build ever renders it pre-selected."""
+        state = self._checkbox_state(ConnectionElementId.MFA_TRUST_DEVICE_INPUT)
+        if state is None:
+            logger.info("No 'Trust this device' checkbox on this BMO screen")
+            return
+        if not state:
+            logger.info("Leaving BMO's 'Trust this device' checkbox unticked")
+            return
+
+        logger.warning("BMO rendered 'Trust this device' pre-ticked; unticking it before confirming")
+        if self._click_until(
+            "untick BMO's 'Trust this device' checkbox",
+            (ConnectionElementId.MFA_TRUST_DEVICE_LABEL,),
+            lambda: self._checkbox_state(ConnectionElementId.MFA_TRUST_DEVICE_INPUT) is not True,
+        ):
+            return
+        logger.error(
+            "Could not untick BMO's 'Trust this device' checkbox; this device may be registered "
+            "with BMO. Continuing with the login."
+        )
+
+    def _finish_post_otp_navigation(self) -> None:
+        """Wait out whatever BMO puts between CONFIRM and the accounts page.
+
+        Older builds ended on a CONTINUE interstitial; the current one redirects straight to the
+        accounts page, so CONTINUE is clicked only when it actually appears. A rejected code shows
+        up as an inline error, which is logged as soon as it appears and repeated in the timeout so
+        the failure names the reason instead of just the elapsed seconds."""
+        logger.info("Waiting for BMO to accept the OTP code")
+        logged_errors: set[str] = set()
+
+        def reached_outcome(driver) -> str | None:
+            if driver.current_url == BMO_SUCCESS_URL:
+                return "success"
+            if self._first_displayed(_MFA_CONTINUE_LOCATORS) is not None:
+                return "continue"
+            message = self._extract_otp_error()
+            if message and message not in logged_errors:
+                logged_errors.add(message)
+                logger.error("BMO OTP error displayed: %s", message)
+            return None
+
         try:
-            confirm_btn = self._wait_until(
-                "find clickable BMO OTP confirm button",
-                clickable(By.XPATH, ConnectionElementId.MFA_CONFIRM),
+            outcome = self._wait_until(
+                "reach the BMO accounts page or a CONTINUE step after the OTP code",
+                reached_outcome,
+                DelaySeconds.LOGIN_SUCCESS_TIMEOUT,
+                screenshot_name="bmo_post_2fa_timeout",
+            )
+        except TimeoutException as e:
+            message = self._extract_otp_error()
+            if message:
+                raise TimeoutException(f"BMO did not accept the OTP code: {message}") from e
+            raise
+
+        if outcome == "continue":
+            self._click_first_match(
+                "the BMO continue button after the OTP code",
+                _MFA_CONTINUE_LOCATORS,
                 DelaySeconds.MFA_STEP_TIMEOUT,
             )
-        except TimeoutException as e:
-            raise TimeoutException("OTP confirm button is not available/clickable while completing BMO 2FA") from e
-        # human=True: the post-OTP confirm/continue (device-trust registration) is the most
-        # heavily fingerprinted step — give it real pointer movement + dwell, not a bare click.
-        self._click("click BMO OTP confirm button", confirm_btn, human=True)
-
-        logger.info("Waiting for CONTINUE button")
-        try:
-            continue_btn = self._wait_until(
-                "find clickable BMO continue button after OTP",
-                clickable(By.XPATH, ConnectionElementId.MFA_CONTINUE),
-                DelaySeconds.TWO_FACTOR_TIMEOUT,
-            )
-        except TimeoutException as e:
-            raise TimeoutException(
-                "Continue button after OTP is not available/clickable while completing BMO 2FA") from e
-        self._click("click BMO continue button after OTP", continue_btn, human=True)
 
         logger.info("Waiting for post-2FA redirect to %s", BMO_SUCCESS_URL)
         self._wait_until(
@@ -277,11 +413,11 @@ class BMOBank(ZenBankScraper):
         )
 
     def _download_transactions_via_api(
-            self,
-            account_uuid: str,
-            app_type: AppType,
-            statement_date: StatementDate,
-            export_directory: Path | str,
+        self,
+        account_uuid: str,
+        app_type: AppType,
+        statement_date: StatementDate,
+        export_directory: Path | str,
     ) -> Path:
         assert self.cookies is not None, "Cookies have not been captured yet."
 
@@ -310,9 +446,7 @@ class BMOBank(ZenBankScraper):
             "X-App-Current-Path": f"/banking/digital/account-details/cc/{account_uuid}",
             "X-Request-ID": request_id,
             "X-Original-Request-Time": now_time.strftime("%a, %d %b %Y %H:%M:%S GMT"),
-            "Referer": (
-                f"https://www1.bmo.com/banking/digital/account-details/cc/{account_uuid}?modal=transactions"
-            ),
+            "Referer": (f"https://www1.bmo.com/banking/digital/account-details/cc/{account_uuid}?modal=transactions"),
         }
 
         body = {
@@ -364,10 +498,10 @@ class BMOBank(ZenBankScraper):
         return file_path
 
     def _parse_transactions_from_web(
-            self,
-            account_uuid: str,
-            from_date: datetime,
-            export_directory: Path,
+        self,
+        account_uuid: str,
+        from_date: datetime,
+        export_directory: Path,
     ) -> Path:
         export_directory.mkdir(parents=True, exist_ok=True)
 
@@ -462,9 +596,7 @@ class BMOBank(ZenBankScraper):
         sign = -1 if "-" in cleaned else 1
         number = re.search(r"[\d,.]+", cleaned)
         if not number:
-            raise ValueError(
-                f"Invalid amount {text!r} for transaction on {date_text!r} ({description!r})"
-            )
+            raise ValueError(f"Invalid amount {text!r} for transaction on {date_text!r} ({description!r})")
         value = float(number.group().replace(",", ""))
         return sign * value
 
@@ -530,9 +662,7 @@ class BMOBank(ZenBankScraper):
             if not date_text:
                 continue
             desc = cells[desc_idx] if desc_idx < len(cells) else ""
-            amount_text = next(
-                (cells[i] for i in amount_idxs if i < len(cells) and cells[i].strip()), ""
-            )
+            amount_text = next((cells[i] for i in amount_idxs if i < len(cells) and cells[i].strip()), "")
             try:
                 txn_date = datetime.strptime(date_text.strip(), "%b %d, %Y")
             except ValueError:
@@ -701,7 +831,12 @@ class BMOBank(ZenBankScraper):
             return False
 
     def _wait_for_2fa_or_success(self) -> Literal["2fa", "success"]:
-        """Wait for either the 2FA NEXT button or the success URL after credentials are submitted.
+        """Wait for either a 2FA screen or the success URL after credentials are submitted.
+
+        Which 2FA screen counts is deliberately broad: the delivery-method step current builds
+        open on, the enter-code step BMO skips ahead to when a code is already in flight, and the
+        NEXT interstitial older builds showed. Keying on one of them alone is what made the
+        previous rebuild read as "login timed out or credentials are invalid".
 
         Logs the BMO login error banner text as soon as it appears, while continuing to wait
         for the normal outcome (or the timeout) so behavior is otherwise unchanged.
@@ -711,7 +846,7 @@ class BMOBank(ZenBankScraper):
         def reached_outcome(driver) -> bool:
             if driver.current_url == BMO_SUCCESS_URL:
                 return True
-            if driver.find_elements(By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON):
+            if any(driver.find_elements(By.XPATH, locator) for locator in _MFA_SCREEN_LOCATORS):
                 return True
             banner_text = self._extract_login_error()
             if banner_text and banner_text not in logged_errors:
@@ -736,39 +871,223 @@ class BMOBank(ZenBankScraper):
             return "success"
         return "2fa"
 
+    # ── 2FA: element lookup ────────────────────────────────────────────
+
+    def _first_displayed(self, locators: tuple[str, ...]) -> tuple[str, ElementHandle] | None:
+        """First enabled, on-screen element matching any of ``locators``, with the one that found it.
+
+        Locators are tried in order, so an earlier (more specific) one always wins over a later
+        fallback. Elements BMO keeps mounted but hidden — the previous OTP step, OneTrust's
+        preference centre — are skipped rather than clicked into the void."""
+        for locator in locators:
+            for element in self.driver.find_elements(By.XPATH, locator):
+                if element.get_attribute("disabled") is not None:
+                    continue
+                if element.is_displayed():
+                    return locator, element
+        return None
+
+    def _wait_for_any(
+        self,
+        description: str,
+        locators: tuple[str, ...],
+        timeout: int,
+        *,
+        screenshot_name: str | None = None,
+    ) -> tuple[str, ElementHandle]:
+        return self._wait_until(
+            description,
+            lambda _driver: self._first_displayed(locators),
+            timeout,
+            screenshot_name=screenshot_name,
+        )
+
+    def _click_first_match(
+        self,
+        description: str,
+        locators: tuple[str, ...],
+        timeout: int,
+        *,
+        human: bool = True,
+    ) -> None:
+        """Click whichever of ``locators`` matches first, re-locating once if the click is lost.
+
+        Angular re-renders these screens as its form state changes, which can retire the handle
+        between finding it and clicking it; one re-locate turns that race into a retry instead of
+        a failed login."""
+        locator, element = self._wait_for_any(f"find {description}", locators, timeout)
+        logger.info("Found %s via %s", description, _locator_name(locator))
+        try:
+            self._click(f"click {description}", element, human=human)
+        except (ScraperError, StaleElementReferenceException) as e:
+            logger.info("%s went stale before the click (%s); re-locating it", description, e)
+            _, element = self._wait_for_any(f"re-find {description}", locators, timeout)
+            self._click(f"click {description}", element, human=human)
+
+    def _click_until(
+        self,
+        description: str,
+        locators: tuple[str, ...],
+        took_effect: Callable[[], bool],
+    ) -> bool:
+        """Click candidates until the page itself confirms the click took. Reports whether it did.
+
+        A form control on these screens is only really clicked once the DOM says so, so every
+        candidate is checked against ``took_effect`` afterwards: a locator that matched the wrong
+        row, or a click a banner swallowed, moves on to the next candidate instead of being taken
+        on faith. Real mouse clicks are tried across the whole chain first; only if none of them
+        registers does a second pass fall back to DOM clicks, which reach a control that something
+        invisible is sitting on top of."""
+        for use_dom_click in (False, True):
+            for locator in locators:
+                match = self._first_displayed((locator,))
+                if match is None:
+                    continue
+                how = _locator_name(locator)
+                if use_dom_click:
+                    self._click_via_dom(f"{description} (via {how})", match[1])
+                else:
+                    self._click(f"{description} (via {how})", match[1], human=True)
+                if self._confirmed_within(took_effect):
+                    logger.info("Completed: %s (via %s%s)", description, how, ", DOM click" if use_dom_click else "")
+                    return True
+                logger.info("Nothing changed after %s via %s; trying the next candidate", description, how)
+        return False
+
+    @staticmethod
+    def _confirmed_within(took_effect: Callable[[], bool], seconds: float = _CLICK_CONFIRM_SECONDS) -> bool:
+        """Give Angular a moment to apply a click before calling it lost.
+
+        Without the grace period a slow re-render reads as a click that missed, and clicking again
+        would toggle a checkbox straight back off."""
+        deadline = monotonic() + seconds
+        while True:
+            if took_effect():
+                return True
+            if monotonic() >= deadline:
+                return False
+            sleep(0.2)
+
+    def _checkbox_state(self, css_selector: str) -> bool | None:
+        """Whether the first checkbox matching ``css_selector`` is ticked; ``None`` if there is none.
+
+        Read as the live DOM property rather than the HTML attribute: BMO's design system never
+        writes ``checked`` back into the markup, so the attribute stays absent however the box
+        is left."""
+        result = self.driver.execute_script(
+            f"const box = document.querySelector({json.dumps(css_selector)}); return box ? !!box.checked : null;"
+        )
+        return None if result is None else bool(result)
+
+    # ── 2FA: asking BMO to text the code ───────────────────────────────
+
     def _handle_2fa_initiation(self) -> None:
-        """Drive the steps to request the OTP code be sent to the user's phone."""
-        logger.info("2FA screen detected — clicking NEXT")
-        next_btn = self._wait_until(
-            "find clickable BMO 2FA next button",
-            clickable(By.XPATH, ConnectionElementId.MFA_NEXT_BUTTON),
-            DelaySeconds.MFA_STEP_TIMEOUT,
-        )
-        self._click("click BMO 2FA next button", next_btn, human=True)
+        """Ask BMO to send the OTP code to the user's phone.
 
-        logger.info("Selecting phone radio button")
-        radio = self._wait_until(
-            "find clickable BMO 2FA phone radio button",
-            clickable(By.XPATH, ConnectionElementId.MFA_PHONE_RADIO),
+        Three steps on one screen — choose the phone delivery option, confirm the code won't be
+        shared, then SEND CODE — each located through its own fallback chain and each verified
+        before the next one runs, so a reworded label or a re-rendered form shows up as a named
+        failure rather than as a code that never arrives."""
+        self._dismiss_cookie_banner_if_showing()
+        self._click_legacy_next_step_if_present()
+        self._wait_until(
+            "reach the BMO 2FA delivery-method step",
+            present(By.XPATH, ConnectionElementId.MFA_METHOD_STEP),
             DelaySeconds.MFA_STEP_TIMEOUT,
+            screenshot_name="bmo_2fa_method_step_missing",
         )
-        self._click("select BMO 2FA phone radio button", radio, human=True)
+        self._select_phone_otp_method()
+        self._accept_otp_disclaimer()
+        # Clicked once and only once, unlike the form controls above: a SEND CODE that did land
+        # but was slow to advance the screen would be clicked again, and the user's phone would
+        # buzz twice with two codes, only one of which BMO accepts. If it really was lost, the
+        # wait below says so plainly instead.
+        self._click_first_match("the BMO SEND CODE button", _MFA_SEND_CODE_LOCATORS, DelaySeconds.MFA_STEP_TIMEOUT)
+        self._wait_until(
+            "reach the BMO enter-OTP-code step after requesting a code",
+            present(By.XPATH, ConnectionElementId.OTP_STEP),
+            DelaySeconds.MFA_STEP_TIMEOUT,
+            screenshot_name="bmo_2fa_code_step_missing",
+        )
 
-        logger.info("Ticking the 'I won't share' checkbox")
-        checkbox = self._wait_until(
-            "find clickable BMO 2FA agreement checkbox",
-            clickable(By.XPATH, ConnectionElementId.MFA_AGREE_CHECKBOX),
-            DelaySeconds.MFA_STEP_TIMEOUT,
-        )
-        self._click("tick BMO 2FA agreement checkbox", checkbox, human=True)
+    def _dismiss_cookie_banner_if_showing(self) -> None:
+        """Clear the consent banner off the 2FA screen before anything on it is clicked.
 
-        logger.info("Clicking SEND CODE")
-        send_btn = self._wait_until(
-            "find clickable BMO send-code button",
-            clickable(By.XPATH, ConnectionElementId.MFA_SEND_CODE),
-            DelaySeconds.MFA_STEP_TIMEOUT,
+        The banner is normally dealt with on the login page, but it comes back on a fresh consent
+        state and covers the middle of the OTP form — where it eats mouse clicks without leaving a
+        trace. Probed first so a session that never sees one doesn't pay the banner's wait."""
+        if self._first_displayed((ConnectionElementId.COOKIE_ACCEPT,)) is None:
+            return
+        logger.info("Cookie consent banner is covering BMO's 2FA screen; dismissing it first")
+        self._dismiss_cookie_banner()
+
+    def _click_legacy_next_step_if_present(self) -> None:
+        """Older BMO builds put a NEXT interstitial ahead of the delivery-method list."""
+        match = self._first_displayed((ConnectionElementId.MFA_NEXT_BUTTON,))
+        if match is None:
+            logger.info("No 2FA NEXT interstitial on this BMO build; going straight to the method step")
+            return
+        self._click("click the BMO 2FA NEXT button", match[1], human=True)
+
+    def _select_phone_otp_method(self) -> None:
+        """Pick the option that texts the code to the user's phone, and prove it took.
+
+        BMO can offer several delivery methods, so the phone one is chosen by what the option
+        says (its label, then its radio value) rather than by position, and the form is read back
+        afterwards: a click that landed on the wrong option, or on nothing at all, moves on to
+        the next locator instead of quietly requesting an email code."""
+        selected = self._selected_otp_method()
+        if selected is not None and _is_phone_delivery_method(selected):
+            logger.info("BMO already has the phone delivery method selected (%s)", selected)
+            return
+
+        logger.info("Selecting the phone delivery method for the BMO verification code")
+
+        def phone_is_selected() -> bool:
+            current = self._selected_otp_method()
+            return current is not None and _is_phone_delivery_method(current)
+
+        if self._click_until("select the BMO phone delivery method", _MFA_PHONE_CHOICE_LOCATORS, phone_is_selected):
+            logger.info("BMO will send the verification code to %s", self._selected_otp_method())
+            return
+
+        selected = self._selected_otp_method()
+        raise ScraperError(
+            "Could not select a phone delivery method on BMO's 2FA screen"
+            + (f"; the form has {selected!r} selected instead" if selected else "")
         )
-        self._click("click BMO send-code button", send_btn, human=True)
+
+    def _selected_otp_method(self) -> str | None:
+        """Label (or value) of the delivery option the OTP form currently has selected."""
+        try:
+            selected = self.driver.execute_script(_JS_SELECTED_OTP_METHOD)
+        except WebDriverException:
+            return None
+        return str(selected) if selected else None
+
+    def _accept_otp_disclaimer(self) -> None:
+        """Tick the "I won't give this code to anyone" box BMO requires before it sends one.
+
+        The box is optional only in the sense that a build without it should still be able to
+        request a code; a box that is present and stays unticked is fatal, because SEND CODE
+        silently does nothing while the form is invalid."""
+        state = self._checkbox_state(ConnectionElementId.MFA_AGREE_CHECKBOX_INPUT)
+        if state is None:
+            logger.info("No confirmation checkbox on this BMO 2FA screen; nothing to tick")
+            return
+        if state:
+            logger.info("BMO's 2FA confirmation checkbox is already ticked")
+            return
+
+        logger.info("Ticking BMO's 2FA confirmation checkbox")
+        if self._click_until(
+            "tick BMO's 2FA confirmation checkbox",
+            _MFA_AGREE_CHECKBOX_LOCATORS,
+            lambda: self._checkbox_state(ConnectionElementId.MFA_AGREE_CHECKBOX_INPUT) is True,
+        ):
+            return
+
+        raise ScraperError("Could not tick the confirmation checkbox on BMO's 2FA screen")
 
     def _capture_cookies(self, account_uuid: str) -> None:
         account_url = self._resolve_account_url(account_uuid)
@@ -810,12 +1129,9 @@ class BMOBank(ZenBankScraper):
                 break
 
         if account_uuid not in self._account_urls:
-            available = ", ".join(
-                f"{self._account_names.get(uuid, '?')} ({uuid})" for uuid in self._account_urls
-            )
+            available = ", ".join(f"{self._account_names.get(uuid, '?')} ({uuid})" for uuid in self._account_urls)
             raise ValueError(
-                f"BMO account {account_uuid} was not found on this profile. "
-                f"Accounts detected: {available or 'none'}."
+                f"BMO account {account_uuid} was not found on this profile. Accounts detected: {available or 'none'}."
             )
         return self._account_urls[account_uuid]
 
@@ -846,6 +1162,19 @@ class BMOBank(ZenBankScraper):
             return text if text else None
         except Exception:
             return None
+
+    def _extract_otp_error(self) -> str | None:
+        """Text of the inline error BMO shows against a rejected or malformed OTP code."""
+        try:
+            for element in self.driver.find_elements(By.XPATH, ConnectionElementId.OTP_ERROR):
+                if not element.is_displayed():
+                    continue
+                text = element.text.strip()
+                if text:
+                    return text
+        except Exception:
+            return None
+        return None
 
     @staticmethod
     def _parse_filename_from_header(header_value: str) -> str | None:

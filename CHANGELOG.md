@@ -3,6 +3,65 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.7.5] - 2026-09-20
+
+### Fixed
+
+- Wealthsimple scrapes work again after WS rebuilt the activity page. The CSV export failed on one
+  thing only -- the "All accounts" master checkbox, whose label WS moved out of the control -- and
+  because the scraper treated that checkbox as required, a working export died there and fell back
+  to reading the activity feed, which the same rebuild had also broken. The checkbox is now found
+  through a chain of locators and treated as optional: when none of them matches, the per-account
+  rows are ticked instead, which reaches the same place.
+- The activity feed is read again. WS moved it onto Base UI accordions, which leave a collapsed row
+  with no id and no `aria-controls` at all, so every selector the fallback used to find, expand and
+  harvest rows addressed markup that no longer exists -- and the attribute it read each field by
+  now marks only the status badge. Rows are read from their collapsed headers in a single pass
+  instead, which the rebuilt header makes possible by carrying payee, type, account, amount and
+  status itself. Nothing is expanded, so there is no region id left to go stale.
+- A scrape that fails both ways now says so. Only the fallback's error reached the browser, so a
+  failed export was reported as "Couldn't find any activity header buttons" -- a message about the
+  wrong half of the scrape. Both causes are now named in one error, and the export's "Download
+  activities" step saves a failure screenshot like every other step.
+- An activity page with no rows is no longer a failure. A window you had no activity in returns an
+  empty result rather than a timeout.
+- The activity feed is waited for, not just the page around it. The shell renders while the feed
+  behind it is still being fetched, so reading it straight away returned an empty CSV from an
+  account that had plenty of activity. An empty feed is still not an error -- the two are told
+  apart in the log and a screenshot.
+- An export whose account rows this scraper cannot recognise no longer fails. WS's account rows
+  lost the `data-testid` the selection was read back through, which left a correctly set-up
+  export failing its own verification; the export now proceeds on the "All accounts" click, and
+  the downloads that arrive are served.
+
+### Changed
+
+- The activity-feed fallback no longer reports trade quantity, limit price, exchange rate, or the
+  exact filled and submitted times. Those live in a row's expanded panel, which is no longer
+  opened. The fallback runs only when the CSV export is unavailable, and the export carries the
+  full detail; trades take their date from the day header, so they still reach the output.
+
+## [0.7.4] - 2026-08-24
+
+### Fixed
+
+- BMO's two-factor step works again on the rebuilt OTP screens. BMO replaced them with an Angular
+  micro-frontend that stamps a fresh UUID on every element and dropped the NEXT interstitial the
+  scraper waited for, so the phone option was never selected and no code was ever sent. Each step
+  is now found through a chain of locators — the stable `name` attribute first, then the ARIA
+  structure, then the visible label text — and every click is read back from the page: the phone
+  option is chosen by what it says rather than by its position, and a click that selected the wrong
+  method or left the confirmation box unticked moves on to the next locator instead of quietly
+  requesting a code that never arrives.
+- "Trust this device" is never ticked. The box is only read back, and unticked again if a build
+  ever renders it pre-selected, so scraping no longer risks registering the machine with BMO.
+- A click the cookie consent banner swallowed no longer stalls the 2FA screen. The banner is
+  cleared off that screen when it reappears there, and a click the page shows didn't land is
+  retried through the DOM, which reaches a control something invisible is sitting on top of.
+- A rejected verification code now fails naming BMO's own inline error ("Please enter a valid
+  code.") instead of only the elapsed timeout, and the CONTINUE step that current builds no longer
+  show is clicked only when it is actually there.
+
 ## [0.7.3] - 2026-08-23
 
 ### Fixed
