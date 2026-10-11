@@ -3,6 +3,14 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.7.7] - 2026-10-10
+
+### Fixed
+
+- Wealthsimple logins for accounts with a passkey no longer stop at "Use your passkey to verify
+  that it's you". WS only sends the SMS code once "Try another way" is chosen, so the scraper now
+  waits for that challenge to appear after the passkey request times out and clicks it.
+
 ## [0.7.6] - 2026-10-10
 
 ### Fixed

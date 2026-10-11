@@ -83,6 +83,15 @@ _ALL_ACCOUNTS_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
     (By.XPATH, ExportElementXpath.ALL_ACCOUNTS_IN_ROW),
 )
 
+# What can follow the password: the SMS code field straight away, or, for an account with a
+# passkey, the passkey challenge's "Try another way" button (testid first, then its label).
+# The OTP field leads so a page that already shows it is never mistaken for the challenge.
+_POST_LOGIN_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
+    (By.XPATH, ConnectionElementXpath.PHONE_2FA),
+    (By.XPATH, ConnectionElementXpath.PASSKEY_TRY_ANOTHER_WAY),
+    (By.XPATH, ConnectionElementXpath.PASSKEY_TRY_ANOTHER_WAY_BY_LABEL),
+)
+
 # The chart-toolbar tab that plots what the account was worth. Its sibling, "Returns", plots
 # WS's own return figure instead, which is not what the earnings series is built from.
 ACCOUNT_VALUE_TAB: Final[str] = "Account value"
@@ -270,6 +279,7 @@ class Wealthsimple(ZenBankScraper):
         password = get_required_env_var("PENNYSPY_WSP")
         self._login(username, password)
         self._check_for_wrong_login()
+        self._skip_passkey_challenge()
         return AuthStep(status="needs_otp", message="Enter the OTP code sent to your phone")
 
     def continue_auth(self, *, otp_code: str | None = None) -> AuthStep:
@@ -931,6 +941,41 @@ class Wealthsimple(ZenBankScraper):
             screenshot_name="wealthsimple_home_redirect_timeout",
         )
         logger.info("Connection successful.")
+
+    def _skip_passkey_challenge(self) -> None:
+        """Get from WS's passkey challenge to the SMS code page by choosing "Try another way".
+
+        Only accounts with a passkey see the challenge, and only after Chrome's passkey request
+        has timed out, so this waits a long while for whichever of the OTP field or the
+        challenge shows up first. The SMS code is only sent once "Try another way" is clicked.
+        Neither showing up is left for ``_send_2fa_text`` to report."""
+        try:
+            locator, element = self._wait_until(
+                "find the Wealthsimple OTP field or the passkey challenge's 'Try another way' button",
+                lambda _driver: self._first_displayed_match(_POST_LOGIN_LOCATORS),
+                DelaySeconds.PASSKEY_CHALLENGE,
+                timeout_log_level=logging.WARNING,
+            )
+        except TimeoutException:
+            logger.warning("Neither the Wealthsimple OTP field nor a passkey challenge found — continuing")
+            return
+        if locator == ConnectionElementXpath.PHONE_2FA:
+            logger.info("No Wealthsimple passkey challenge — the SMS code page is already shown")
+            return
+        logger.info("Wealthsimple passkey challenge shown — choosing 'Try another way' (matched %s)", locator)
+        self._click("choose 'Try another way' on the Wealthsimple passkey challenge", element)
+        try:
+            self._wait_until(
+                "wait for the Wealthsimple OTP field after 'Try another way'",
+                present(By.XPATH, ConnectionElementXpath.PHONE_2FA),
+                DelaySeconds.PAGE_LOADING,
+                screenshot_name="wealthsimple_passkey_try_another_way_timeout",
+            )
+        except TimeoutException as e:
+            raise ScraperError(
+                "Failed while waiting for the Wealthsimple OTP field after choosing 'Try another way' "
+                "on the passkey challenge"
+            ) from e
 
     def _dismiss_passkey_prompt(self) -> None:
         """Dismiss the optional 'Create passkey' prompt shown after 2FA by clicking
