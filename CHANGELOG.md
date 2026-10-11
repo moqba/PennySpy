@@ -3,6 +3,21 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.7.6] - 2026-10-10
+
+### Fixed
+
+- Wealthsimple logins work again. WS rebuilt its login form: the email field is now
+  `type="email"` with no aria-label, the password field lost its `inputmode` and the "Log in"
+  button lost `role="button"`, so every login stopped at "Failed while finding element to enter
+  Wealthsimple username" before typing anything. The three locators now key only on what the old
+  and the new form both carry.
+
+### Changed
+
+- The Docker image is built on `selenium/standalone-chrome:153.0-20260909` (Chrome 153, up from
+  148), which brings it back within the six-major-release limit of stable that CI enforces.
+
 ## [0.7.5] - 2026-09-20
 
 ### Fixed

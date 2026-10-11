@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.6
 
-ARG SELENIUM_VERSION=148.0-20260505
+ARG SELENIUM_VERSION=153.0-20260909
 ARG UV_VERSION=0.11.19
 
 FROM ghcr.io/astral-sh/uv:${UV_VERSION} AS uv
