@@ -13,6 +13,11 @@ must have a matching `## [x.y.z]` section before merging to `main`.
   Wealthsimple username" before typing anything. The three locators now key only on what the old
   and the new form both carry.
 
+### Changed
+
+- The Docker image is built on `selenium/standalone-chrome:153.0-20260909` (Chrome 153, up from
+  148), which brings it back within the six-major-release limit of stable that CI enforces.
+
 ## [0.7.5] - 2026-09-20
 
 ### Fixed
