@@ -12,6 +12,11 @@ class ConnectionElementXpath(StrEnum):
     PHONE_2FA = '//input[@type="text" and @autocomplete="one-time-code" and @placeholder="– – – – – –"]'
     FAILED_2FA = '//div[@role="alert" and contains(text(), "Try again or get a new code")]'
     PASSKEY_MAYBE_LATER = '//button[@role="button" and .//span[normalize-space()="Maybe later"]]'
+    # "Use your passkey to verify that it's you", shown once Chrome's passkey request for an
+    # account with a passkey fails. "Try another way" is what sends the SMS code. The data-testid
+    # goes first; the visible label is the fallback for when WS renames it.
+    PASSKEY_TRY_ANOTHER_WAY = '//button[@data-testid="passkey-challenge-2fa-error-try-another-way-button"]'
+    PASSKEY_TRY_ANOTHER_WAY_BY_LABEL = '//button[.//span[normalize-space()="Try another way"]]'
 
 
 class ActivityElementXpath(StrEnum):

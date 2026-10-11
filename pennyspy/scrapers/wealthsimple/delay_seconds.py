@@ -20,6 +20,10 @@ class DelaySeconds(IntEnum):
     DOWNLOAD_INCOMPLETE_SETTLE = 60
     COOKIE_PROMPT_TIMEOUT = 60
     TWO_FACTOR_TIMEOUT = 5 * 60
+    # How long the password is given to lead to either the SMS code field or WS's passkey
+    # challenge. For an account with a passkey, the challenge only appears once Chrome's own
+    # passkey request has timed out unanswered, which takes a minute or more.
+    PASSKEY_CHALLENGE = 3 * 60
     # How long a chart-toolbar tab is waited for on the account-details page. Short on
     # purpose: the tabs only steer the graph the page draws for itself, so a missing one is
     # worth a brief look and no more.
