@@ -42,6 +42,10 @@ class BankScraperInterface(ABC):
     def start_auth(self, **kwargs: Any) -> AuthStep:
         """Begin the authentication flow (navigate to login page, enter credentials).
 
+        The API passes the login to use as ``credentials``
+        (:class:`pennyspy.credentials.resolve.LoginCredentials`); when it is left out, the
+        bank's legacy env vars are used.
+
         Returns an ``AuthStep`` indicating what the caller should do next.
         """
 

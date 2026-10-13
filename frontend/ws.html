@@ -22,6 +22,12 @@
 
       <!-- ── Step 1 ─────────────────────────────────────────────── -->
       <div class="form-group">
+        <label class="form-label" for="credential_id">Login</label>
+        <select id="credential_id" class="select"><option>Loading…</option></select>
+        <p class="form-hint" id="credential-hint"></p>
+      </div>
+
+      <div class="form-group">
         <label class="form-label" for="since_date">Export Period</label>
         <select id="since_date" class="select">
           <!-- Populated by ws.js -->
@@ -87,6 +93,7 @@
   </div>
   <a href="logs.html" class="logs-fab">Logs</a>
   <script src="scrape-download.js"></script>
+  <script src="login-picker.js"></script>
   <script src="ws.js"></script>
   <script src="package-version.js"></script>
   <script src="health-check.js"></script>

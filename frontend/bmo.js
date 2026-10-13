@@ -69,7 +69,7 @@ loginBtn.addEventListener('click', async () => {
     const res = await fetch(`${BASE}/bmo/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ account_uuids }),
+      body: JSON.stringify({ account_uuids, ...LoginPicker.selected() }),
     });
 
     if (!res.ok) {
@@ -295,3 +295,5 @@ function escapeHtml(str) {
   appTypeSelect.addEventListener('change', toggle);
   toggle();
 })();
+
+LoginPicker.mount('bmo');

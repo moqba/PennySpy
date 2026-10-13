@@ -5,12 +5,17 @@ check your Scotiabank app and approve the sign-in request within 2 minutes. No O
 the `/login` call blocks until the push notification is approved (or times out).
 >
 
-Regardless of the installation method, the following env variables are required:
+## Logins
+Add your Scotiabank login on the **Logins** page of the web UI (`/app/credentials.html`). It is
+stored encrypted on the server and never shown again; you can save several and pick one on the
+Scotiabank page. See [Bank logins](../../../README.md#bank-logins) for how they are stored.
+
+Legacy fallback: when no Scotiabank login is saved, these env variables are used instead (keep them
+in an `.env` file):
 ```dotenv
 PENNYSPY_SCOTIAU="scotiabank_email"
 PENNYSPY_SCOTIAP="scotiabank_password"
 ```
-It is recommended to make an `.env` file containing these.
 
 ## Scotiabank API
 
@@ -23,9 +28,13 @@ Because Scotiabank uses a mobile push notification for 2SV, the login call block
 
 #### `POST /scotia/login`
 
-Initiate a Scotiabank login. Credentials are read from environment variables. The call blocks until 2SV is approved on your phone.
+Initiate a Scotiabank login with a saved login (see [Logins](#logins)). The call blocks until 2SV is approved on your phone.
 
-**Request body:** none
+**Request body (JSON, optional):**
+
+| Name          | Type   | Required | Description                                                                 |
+|---------------|--------|----------|-----------------------------------------------------------------------------|
+| credential_id | string | no       | Id of the saved login to use (from `GET /credentials?bank=scotia`). Leave it out when only one login is saved, or to use the env variables when none is |
 
 **Response:**
 

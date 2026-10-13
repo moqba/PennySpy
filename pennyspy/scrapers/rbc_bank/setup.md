@@ -7,12 +7,17 @@ to approve the sign-in request in your RBC mobile app.
 Message-based 2FA is a potential future enhancement, though not a priority at this time.
 >
 
-Regardless of the installation method, the following env variables are required:
+## Logins
+Add your RBC login on the **Logins** page of the web UI (`/app/credentials.html`). It is
+stored encrypted on the server and never shown again; you can save several and pick one on the
+RBC page. See [Bank logins](../../../README.md#bank-logins) for how they are stored.
+
+Legacy fallback: when no RBC login is saved, these env variables are used instead (keep them
+in an `.env` file):
 ```dotenv
 PENNYSPY_RBCU="rbc_username"
 PENNYSPY_RBCP="rbc_password"
 ```
-It is recommended to make an `.env` file containing these.
 
 ## RBC API
 
@@ -24,9 +29,13 @@ It is recommended to make an `.env` file containing these.
 
 #### `POST /rbc/login`
 
-Initiate an RBC login. Credentials are read from environment variables.
+Initiate an RBC login with a saved login (see [Logins](#logins)).
 
-**Request body:** none
+**Request body (JSON, optional):**
+
+| Name          | Type   | Required | Description                                                                 |
+|---------------|--------|----------|-----------------------------------------------------------------------------|
+| credential_id | string | no       | Id of the saved login to use (from `GET /credentials?bank=rbc`). Leave it out when only one login is saved, or to use the env variables when none is |
 
 **Response:**
 

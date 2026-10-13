@@ -4,12 +4,17 @@ The scraper uses OTP-based mobile 2FA. After calling `/ws/login`, check your Wea
 SMS for a 6-digit code and pass it to `/ws/verify` within the session timeout window.
 >
 
-Regardless of the installation method, the following env variables are required:
+## Logins
+Add your Wealthsimple login on the **Logins** page of the web UI (`/app/credentials.html`). It is
+stored encrypted on the server and never shown again; you can save several and pick one on the
+Wealthsimple page. See [Bank logins](../../../README.md#bank-logins) for how they are stored.
+
+Legacy fallback: when no Wealthsimple login is saved, these env variables are used instead (keep them
+in an `.env` file):
 ```dotenv
 PENNYSPY_WSU="wealthsimple_email"
 PENNYSPY_WSP="wealthsimple_password"
 ```
-It is recommended to make an `.env` file containing these.
 
 ## Wealthsimple API
 
@@ -25,17 +30,21 @@ call — naming accounts adds their earnings CSVs to it rather than costing a se
 Activity comes from the **Download activities** export on `my.wealthsimple.com/app/activity`.
 The scraper picks the shortest period the dialog offers (3, 6 or 12 months) that still covers
 `since_date`, selects **All accounts**, and returns the CSVs the browser downloads without
-modifying them. WS can serve one file per account; several files are bundled into a ZIP with
-each entry unchanged. If the export dialog is unavailable, the scraper falls back to parsing
+modifying them. WS can serve one file per account; several files come back from the API as a
+JSON envelope (`{"files": [{"filename": ..., "content_base64": ...}]}`), each file unchanged. If the export dialog is unavailable, the scraper falls back to parsing
 the activity feed directly, which produces the normalized CSV described below instead.
 
 ---
 
 #### `POST /ws/login`
 
-Initiate a Wealthsimple login. Credentials are read from environment variables.
+Initiate a Wealthsimple login with a saved login (see [Logins](#logins)).
 
-**Request body:** none
+**Request body (JSON, optional):**
+
+| Name          | Type   | Required | Description                                                                 |
+|---------------|--------|----------|-----------------------------------------------------------------------------|
+| credential_id | string | no       | Id of the saved login to use (from `GET /credentials?bank=ws`). Leave it out when only one login is saved, or to use the env variables when none is |
 
 **Response:**
 

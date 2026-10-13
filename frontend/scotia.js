@@ -62,7 +62,11 @@ fetchBtn.addEventListener('click', async () => {
 
   try {
     // Step 1: login
-    const loginRes = await fetch(`${BASE}/scotia/login`, { method: 'POST' });
+    const loginRes = await fetch(`${BASE}/scotia/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(LoginPicker.selected()),
+    });
 
     if (!loginRes.ok) {
       const err = await loginRes.json().catch(() => ({ detail: `HTTP ${loginRes.status}` }));
@@ -152,3 +156,5 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+LoginPicker.mount('scotia');

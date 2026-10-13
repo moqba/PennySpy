@@ -11,8 +11,9 @@ from typing import Any, Final
 
 import requests
 
+from pennyspy.credentials.resolve import LoginCredentials, credentials_or_env
 from pennyspy.scrapers.base import AuthStep, ZenBankScraper
-from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
+from pennyspy.scrapers.get_required_env_var import SecretString
 from pennyspy.scrapers.scotiabank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.scotiabank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.scraper import BrowserConfig
@@ -36,13 +37,13 @@ class ScotiaBank(ZenBankScraper):
 
     def start_auth(self, **kwargs: Any) -> AuthStep:
         try:
-            return self._do_start_auth()
+            return self._do_start_auth(credentials_or_env("scotia", kwargs.get("credentials")))
         except Exception:
             logger.exception("start_auth failed — saving screenshot")
             self._save_screenshot("scotia_start_auth_error")
             raise
 
-    def _do_start_auth(self) -> AuthStep:
+    def _do_start_auth(self, credentials: LoginCredentials) -> AuthStep:
         logger.info("Navigating to Scotiabank home page: %s", SCOTIA_HOME_URL)
         self._navigate("open Scotiabank home page", SCOTIA_HOME_URL)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
@@ -69,9 +70,7 @@ class ScotiaBank(ZenBankScraper):
         logger.info("Login page loaded — current URL: %s", self.driver.current_url)
         logger.info("Page title: %s", self.driver.title)
 
-        username = get_required_env_var("PENNYSPY_SCOTIAU")
-        password = get_required_env_var("PENNYSPY_SCOTIAP")
-        self._login(username, password)
+        self._login(credentials.username, credentials.password)
         self._check_for_wrong_login()
 
         logger.info("Credentials submitted — current URL: %s", self.driver.current_url)

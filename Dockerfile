@@ -17,6 +17,25 @@ FROM selenium/standalone-chrome:${SELENIUM_VERSION} AS runtime
 
 USER root
 
+# Run as uid/gid 1000 instead of the base image's 1200/1201. On most hosts 1000 is the first
+# user, so a bind-mounted ./pennyspy-data created by that user is writable without a chown —
+# and saved logins (pennyspy/credentials) must land on the volume, not in the container.
+# seluser keeps its name; only the ids change. The base image's "ubuntu" account already holds
+# 1000 and is unused, so it goes first. Everything the base image gave to 1200/1201
+# (/home/seluser, /opt/bin, supervisor's run and log dirs, /etc/passwd) follows seluser.
+ARG PENNYSPY_UID=1000
+ARG PENNYSPY_GID=1000
+RUN OLD_UID="$(id -u seluser)" OLD_GID="$(id -g seluser)" \
+    && if getent passwd ubuntu >/dev/null; then userdel --remove ubuntu 2>/dev/null || userdel ubuntu; fi \
+    && if getent group ubuntu >/dev/null; then groupdel ubuntu; fi \
+    && groupmod --gid "${PENNYSPY_GID}" seluser \
+    && usermod --uid "${PENNYSPY_UID}" --gid "${PENNYSPY_GID}" seluser \
+    && find / -xdev \( -uid "${OLD_UID}" -o -gid "${OLD_GID}" \) -not -path '/proc/*' \
+         -exec chown --no-dereference "${PENNYSPY_UID}:${PENNYSPY_GID}" {} +
+
+ENV SEL_UID=${PENNYSPY_UID} \
+    SEL_GID=${PENNYSPY_GID}
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
@@ -69,5 +88,6 @@ sys.exit(0 if urllib.request.urlopen(f'http://127.0.0.1:{port}/docs', timeout=3)
 # Back to the unprivileged selenium user; the base CMD (/opt/bin/entry_point.sh -> supervisord)
 # is preserved so the display stack and the app start together. Referencing the account by name
 # (rather than a hardcoded uid) keeps ownership aligned with whatever uid/gid the base image
-# assigns seluser, so the per-session Chrome user-data dir stays writable.
+# assigns seluser (1000 after the remap above), so the per-session Chrome user-data dir stays
+# writable.
 USER seluser

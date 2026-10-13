@@ -15,12 +15,13 @@ from typing import Any, Final, Literal, cast
 
 import requests
 
+from pennyspy.credentials.resolve import credentials_or_env
 from pennyspy.scrapers.base import AuthStep, ZenBankScraper
 from pennyspy.scrapers.bmo_bank.connection_element_id import PHONE_METHOD_WORDS, ConnectionElementId
 from pennyspy.scrapers.bmo_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.bmo_bank.get_default_filename import get_default_filename
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
-from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
+from pennyspy.scrapers.get_required_env_var import SecretString
 from pennyspy.scrapers.scraper import BrowserConfig
 from pennyspy.scrapers.zen_scraper import (
     By,
@@ -163,8 +164,8 @@ class BMOBank(ZenBankScraper):
         account_uuids: list[str] = list(kwargs["account_uuids"])
         assert account_uuids, "At least one account UUID is required"
         self._account_uuids = account_uuids
-        username = get_required_env_var("PENNYSPY_BMOU")
-        password = get_required_env_var("PENNYSPY_BMOPP")
+        credentials = credentials_or_env("bmo", kwargs.get("credentials"))
+        username, password = credentials.username, credentials.password
 
         logger.info("Navigating to BMO login page")
         self._navigate("open BMO login page", BMO_LOGIN_URL)

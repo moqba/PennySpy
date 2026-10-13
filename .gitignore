@@ -20,3 +20,6 @@ venv/
 
 # local testing
 .private
+
+# Runtime data: logs, exports, screenshots, and the saved logins with their key
+pennyspy-data/

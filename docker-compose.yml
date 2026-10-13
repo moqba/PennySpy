@@ -1,6 +1,10 @@
 services:
   pennyspy:
     image: docker.io/moqba/pennyspy:latest
+    # The image runs as uid/gid 1000. ./pennyspy-data must be owned by the same ids, or logs,
+    # exports and saved logins cannot be written (check with `ls -ln`, fix with
+    # `sudo chown -R 1000:1000 ./pennyspy-data`).
+    user: "1000:1000"
     environment:
       # Uncomment any of the lines below to set configuration options
       # - PENNYSPY_PORT=5056
@@ -15,7 +19,9 @@ services:
       # Save current page HTML next to scraper failure diagnostics when set.
       # Captured pages may include sensitive bank page content.
       # - PENNYSPY_FAILURE_HTML_DIR=/app/data/failure-html
-      # user can set these in the .env file
+      # Bank logins are added on the Logins page of the web UI and stored encrypted in
+      # ./pennyspy-data (credentials.json + secret.key; back up both together).
+      # Legacy fallback, used only when a bank has no saved login (better kept in .env):
       # - PENNYSPY_RBCU=user
       # - PENNYSPY_RBCP=hunter123
       # !! If you are not using any of these options, remove the 'environment:' tag entirely.
