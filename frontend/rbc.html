@@ -22,6 +22,12 @@
 
       <div class="form-block">
         <div class="form-group">
+          <label class="form-label" for="credential_id">Login</label>
+          <select id="credential_id" class="select"><option>Loading…</option></select>
+          <p class="form-hint" id="credential-hint"></p>
+        </div>
+
+        <div class="form-group">
           <label class="form-label" for="software">Export Format</label>
           <select id="software" class="select">
             <option value="EXCEL">CSV &mdash; Excel / Spreadsheet</option>
@@ -88,6 +94,7 @@
   </div>
   <a href="logs.html" class="logs-fab">Logs</a>
   <script src="qfx-filter.js"></script>
+  <script src="login-picker.js"></script>
   <script src="rbc.js"></script>
   <script src="package-version.js"></script>
   <script src="health-check.js"></script>

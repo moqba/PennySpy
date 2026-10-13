@@ -12,11 +12,20 @@ from fastapi import APIRouter, BackgroundTasks, Body, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
+from pennyspy.credentials.resolve import LoginSelectionError, resolve_login
+from pennyspy.credentials.store import CredentialNotFound, CredentialStore, CredentialStoreError
 from pennyspy.scrapers.base import BankScraperInterface
 from pennyspy.scrapers.export_store import prune_exports, retain_exports
 from pennyspy.scrapers.session import ScraperSessionManager
 
 logger = getLogger(__name__)
+
+
+class LoginParams(BaseModel):
+    """Which saved login to sign in with. Leave it out to use the bank's only saved login, or
+    the legacy env vars when none is saved (see :func:`pennyspy.credentials.resolve.resolve_login`)."""
+
+    credential_id: str | None = None
 
 
 class VerifyParams(BaseModel):
@@ -26,17 +35,21 @@ class VerifyParams(BaseModel):
 
 def create_scraper_router(
     *,
+    bank: str,
     scraper_type: type[BankScraperInterface],
-    login_params_model: type[BaseModel] | None = None,
+    login_params_model: type[LoginParams] | None = None,
     scrape_params_model: type[BaseModel],
     session_manager: ScraperSessionManager,
+    credential_store: CredentialStore,
 ) -> APIRouter:
     """Build a standard 3-endpoint router (login -> verify -> scrape) for any BankScraperInterface.
 
     ``scraper_type`` is the concrete scraper class.  It is used both as the
     factory (called with no arguments to create instances) and to scope
     sessions so that a session created for one bank cannot be used with
-    another bank's endpoints.
+    another bank's endpoints. ``bank`` is the key saved logins are filed under
+    (``bmo``, ``rbc``, ``scotia``, ``ws``), and ``credential_store`` is where they are read
+    from. ``login_params_model``, when given, must extend :class:`LoginParams`.
     """
 
     router = APIRouter()
@@ -47,43 +60,41 @@ def create_scraper_router(
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e))
 
+    def login(params: LoginParams | None) -> dict[str, Any]:
+        login_kwargs = params.model_dump() if params is not None else {}
+        credential_id: str | None = login_kwargs.pop("credential_id", None)
+        try:
+            credentials = resolve_login(bank, credential_id, credential_store)
+        except CredentialNotFound as e:
+            raise HTTPException(status_code=404, detail=e.args[0])
+        except (LoginSelectionError, CredentialStoreError) as e:
+            raise HTTPException(status_code=400, detail=str(e))
+
+        session_manager.close_all()
+        scraper = scraper_type()
+        try:
+            step = scraper.start_auth(credentials=credentials, **login_kwargs)
+        except Exception as e:
+            logger.exception("%s login failed", scraper_type.__name__)
+            scraper.quit()
+            raise HTTPException(status_code=400, detail=str(e))
+        session_id = session_manager.create(scraper)
+        logger.info("Login initiated, session_id=%s", session_id)
+        return {"session_id": session_id, **asdict(step)}
+
     if login_params_model is not None:
 
-        @router.post("/login")
-        def login_with_params(
-            params: Annotated[BaseModel, Body()],
-        ) -> dict[str, Any]:
-            session_manager.close_all()
-            scraper = scraper_type()
-            login_kwargs = params.model_dump()
-            try:
-                step = scraper.start_auth(**login_kwargs)
-            except Exception as e:
-                logger.exception("%s login failed", scraper_type.__name__)
-                scraper.quit()
-                raise HTTPException(status_code=400, detail=str(e))
-            session_id = session_manager.create(scraper)
-            logger.info("Login initiated, session_id=%s", session_id)
-            return {"session_id": session_id, **asdict(step)}
+        def login_endpoint(params: Annotated[BaseModel, Body()]) -> dict[str, Any]:
+            return login(params)  # type: ignore[arg-type]
 
-        # Override the endpoint's JSON schema to use the concrete model
-        login_with_params.__annotations__["params"] = Annotated[login_params_model, Body()]
+        login_endpoint.__annotations__["params"] = Annotated[login_params_model, Body()]
 
     else:
+        # Banks with nothing to choose but the login accept an empty body, as they always have.
+        def login_endpoint(params: Annotated[LoginParams | None, Body()] = None) -> dict[str, Any]:  # type: ignore[misc]
+            return login(params)
 
-        @router.post("/login")
-        def login_no_params() -> dict[str, Any]:
-            session_manager.close_all()
-            scraper = scraper_type()
-            try:
-                step = scraper.start_auth()
-            except Exception as e:
-                logger.exception("%s login failed", scraper_type.__name__)
-                scraper.quit()
-                raise HTTPException(status_code=400, detail=str(e))
-            session_id = session_manager.create(scraper)
-            logger.info("Login initiated, session_id=%s", session_id)
-            return {"session_id": session_id, **asdict(step)}
+    router.post("/login")(login_endpoint)
 
     @router.post("/verify")
     def verify(params: Annotated[VerifyParams, Body()]) -> dict[str, Any]:

@@ -19,13 +19,15 @@ from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse,
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, field_validator
 
+from pennyspy.credentials.router import create_credentials_router
+from pennyspy.credentials.store import CredentialStore
 from pennyspy.logging_setup import setup_logging
 from pennyspy.request_log import ResponseDeliveryLogger
 from pennyspy.scrapers.bmo_bank.bmo_bank import BMOBank
 from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
 from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
 from pennyspy.scrapers.rbc_bank.request_options import AccountInfo, Include, Software
-from pennyspy.scrapers.router import create_scraper_router
+from pennyspy.scrapers.router import LoginParams, create_scraper_router
 from pennyspy.scrapers.scotiabank.scotiabank import ScotiaBank
 from pennyspy.scrapers.session import ScraperSessionManager
 from pennyspy.scrapers.wealthsimple.wealthsimple import Wealthsimple
@@ -38,7 +40,7 @@ logger = getLogger(__name__)
 # ── Per-bank parameter models ─────────────────────────────────────────
 
 
-class BmoLoginParams(BaseModel):
+class BmoLoginParams(LoginParams):
     account_uuids: list[str]
 
     @field_validator("account_uuids", mode="before")
@@ -110,6 +112,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 
 session_manager = ScraperSessionManager(ttl_seconds=600)
+credential_store = CredentialStore()
 
 
 def _get_package_version() -> str:
@@ -130,10 +133,12 @@ def _get_package_version() -> str:
 
 app.include_router(
     create_scraper_router(
+        bank="bmo",
         scraper_type=BMOBank,
         login_params_model=BmoLoginParams,
         scrape_params_model=BmoScrapeParams,
         session_manager=session_manager,
+        credential_store=credential_store,
     ),
     prefix="/bmo",
     tags=["BMO"],
@@ -141,9 +146,11 @@ app.include_router(
 
 app.include_router(
     create_scraper_router(
+        bank="rbc",
         scraper_type=RBCBank,
         scrape_params_model=RbcScrapeParams,
         session_manager=session_manager,
+        credential_store=credential_store,
     ),
     prefix="/rbc",
     tags=["RBC"],
@@ -151,9 +158,11 @@ app.include_router(
 
 app.include_router(
     create_scraper_router(
+        bank="scotia",
         scraper_type=ScotiaBank,
         scrape_params_model=ScotiaScrapeParams,
         session_manager=session_manager,
+        credential_store=credential_store,
     ),
     prefix="/scotia",
     tags=["Scotiabank"],
@@ -162,12 +171,20 @@ app.include_router(
 
 app.include_router(
     create_scraper_router(
+        bank="ws",
         scraper_type=Wealthsimple,
         scrape_params_model=WsScrapeParams,
         session_manager=session_manager,
+        credential_store=credential_store,
     ),
     prefix="/ws",
     tags=["Wealthsimple"],
+)
+
+app.include_router(
+    create_credentials_router(credential_store),
+    prefix="/credentials",
+    tags=["Logins"],
 )
 
 API_PORT: Final[int] = int(os.getenv("PENNYSPY_PORT", "5056"))

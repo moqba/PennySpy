@@ -12,8 +12,9 @@ from typing import Any, Final
 from bs4 import BeautifulSoup
 from pandas import DataFrame
 
+from pennyspy.credentials.resolve import credentials_or_env
 from pennyspy.scrapers.base import AuthStep, ZenBankScraper
-from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
+from pennyspy.scrapers.get_required_env_var import SecretString
 from pennyspy.scrapers.scraper import BrowserConfig
 from pennyspy.scrapers.wealthsimple.account_earnings import (
     DEFAULT_CURRENCY,
@@ -275,8 +276,8 @@ class Wealthsimple(ZenBankScraper):
         logger.info("Sending Login request")
         self._navigate("open Wealthsimple login page", WEALTHSIMPLE_LOGIN)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
-        username = get_required_env_var("PENNYSPY_WSU")
-        password = get_required_env_var("PENNYSPY_WSP")
+        credentials = credentials_or_env("ws", kwargs.get("credentials"))
+        username, password = credentials.username, credentials.password
         self._login(username, password)
         self._check_for_wrong_login()
         self._skip_passkey_challenge()

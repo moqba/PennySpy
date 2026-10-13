@@ -936,3 +936,57 @@ input[type="date"] { color-scheme: dark; }
   .card { padding: 24px 20px; }
   .site-title { font-size: 34px; }
 }
+
+/* ─── SAVED LOGINS ──────────────────────────────────────────────── */
+.login-list { overflow-x: auto; }
+
+.login-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.login-table th {
+  text-align: left;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+  padding: 0 8px 8px;
+  border-bottom: 1px solid var(--border-2);
+}
+
+.login-table td {
+  padding: 10px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.login-list__hint,
+.login-list__date {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+
+.login-list__date { white-space: nowrap; }
+
+.login-list__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.btn--small {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+.login-form__actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.form-hint a { color: var(--amber); }

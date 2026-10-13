@@ -8,12 +8,17 @@ to `/bmo/verify` within the 10-minute session timeout. Once verified, call `/bmo
 The scraper now only supports credit cards.
 >
 
-Regardless of the installation method, the following env variables are required:
+## Logins
+Add your BMO login on the **Logins** page of the web UI (`/app/credentials.html`). It is
+stored encrypted on the server and never shown again; you can save several and pick one on the
+BMO page. See [Bank logins](../../../README.md#bank-logins) for how they are stored.
+
+Legacy fallback: when no BMO login is saved, these env variables are used instead (keep them
+in an `.env` file):
 ```dotenv
 PENNYSPY_BMOU="bmo_username"
 PENNYSPY_BMOPP="bmo_password"
 ```
-It is recommended to make an `.env` file containing these.
 
 For the account_uid, refer to the [login section of the api](#uuid_guide).
 
@@ -29,14 +34,14 @@ Because BMO requires a manual OTP, the flow is split across three endpoints:
 ---
 #### `POST /bmo/login`
 
-Initiate a BMO login. Credentials are read from environment variables.
+Initiate a BMO login with a saved login (see [Logins](#logins)).
 
 <a id="**uuid_guide**"></a>
 The account_uuid can be found on the BMO website. When selecting the specific account of interest, the URL would contain the account_uuid as such: `https://www1.bmo.com/banking/digital/account-details/<type>/<account_uuid>`, where `<type>` is `cc` for a credit card or `ba` for a bank (chequing/savings) account. You only need the UUID — the scraper resolves the correct type automatically from the account side nav, so bank and credit card UUIDs are both accepted (the type prefix in the URL can be ignored).
 
 You can target multiple accounts in a single session by passing more than one UUID. When more than
-one account is scraped, `/bmo/scrape` returns a ZIP archive containing one transaction file per
-account (each namespaced under its account UUID).
+one account is scraped, `/bmo/scrape` returns a JSON envelope with one transaction file per
+account: `{"files": [{"filename": ..., "content_base64": ...}]}`.
 
 Note: the CSV/QFX download path (selected with `statement_date`) is credit-card-only. Bank accounts
 must use the web-parsing path (`csv_web` with a `from_date`); a `statement_date` request for a bank
@@ -47,6 +52,7 @@ account is rejected with a clear error.
 | Name          | Type            | Required | Description                                                                 |
 |---------------|-----------------|----------|-----------------------------------------------------------------------------|
 | account_uuids | array of string | yes      | UUIDs of the BMO accounts to target — credit card or bank (a single string is also accepted) |
+| credential_id | string          | no       | Id of the saved login to use (from `GET /credentials?bank=bmo`). Leave it out when only one login is saved, or to use the env variables when none is |
 
 **Response:**
 
@@ -95,8 +101,8 @@ Retrieve transactions as a downloadable file.
 | from_date      | string | if `csv_web`     | Fetch transactions on or after this date (`YYYY-MM-DD`), web-parsed         |
 
 **Response:** A downloadable file whose name and format depend on the selected `app_type`. When
-multiple `account_uuids` were provided at login, the response is a ZIP archive bundling one file
-per account.
+multiple `account_uuids` were provided at login, the response is the JSON envelope described
+above, with one base64-encoded file per account.
 
 **Error responses:**
 

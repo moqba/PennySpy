@@ -52,7 +52,11 @@ fetchBtn.addEventListener('click', async () => {
 
   try {
     // Step 1: login
-    const loginRes = await fetch(`${BASE}/rbc/login`, { method: 'POST' });
+    const loginRes = await fetch(`${BASE}/rbc/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(LoginPicker.selected()),
+    });
 
     if (!loginRes.ok) {
       const err = await loginRes.json().catch(() => ({ detail: `HTTP ${loginRes.status}` }));
@@ -168,3 +172,5 @@ function escapeHtml(str) {
   if (account_info) document.getElementById('account_info').value = account_info;
   if (include)      document.getElementById('include').value      = include;
 })();
+
+LoginPicker.mount('rbc');

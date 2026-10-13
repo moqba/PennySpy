@@ -20,17 +20,25 @@ The API provides a landing page that allows users to easily download their trans
 Pennyspy api is available as a Docker image ready to be run in your own custom environment.
 ### Launch container using Docker Compose
 You can use the `docker-compose.yml` file included in the repository to run the latest stable version of the API.
-To create and run the container, you should use an `.env` file for your credentials or pass directly the credentials under the `docker-compose.yml` file:
+Create the data directory first, so it belongs to you rather than to root, then start the container:
 ```shell
+mkdir -p pennyspy-data
 docker compose up --detach
 ```
-for required env variables, view the [setup](#Setup) for the bank of choice.
+Then open http://localhost:5056 and add your bank logins on the **Logins** page (see
+[Bank logins](#bank-logins)).
+
+The image runs as uid/gid **1000** (set again by `user: "1000:1000"` in `docker-compose.yml`).
+`./pennyspy-data` must be owned by the same ids, or logs, exports and saved logins cannot be
+written. Check with `ls -ln` and fix with `sudo chown -R 1000:1000 pennyspy-data`. If your user
+has another uid, change the `user:` line to match it and make sure the directory is owned by that uid.
 
 ### Launch container using docker command
 It is possible, alternatively, to use docker using this command.
 ```shell
-docker run --restart=unless-stopped -d -p 5056:5056 -p 7900:7900 --shm-size=2g -v YOUR/PATH/TO/DATA:/app/data --name pennyspy moqba/pennyspy:latest
+docker run --restart=unless-stopped -d -p 5056:5056 -p 7900:7900 --shm-size=2g --user 1000:1000 -v YOUR/PATH/TO/DATA:/app/data --name pennyspy moqba/pennyspy:latest
 ```
+`YOUR/PATH/TO/DATA` must be owned by uid 1000.
 
 ### Watch the browser live
 The image runs Chrome **visibly** on a virtual display and ships a built-in noVNC viewer, so you can
@@ -61,6 +69,58 @@ Screenshots captured during scraper errors are written to the data directory by 
 
 Set `PENNYSPY_FAILURE_HTML_DIR` to also save the current browser page HTML when a scraper failure screenshot is captured. With Docker Compose, use `/app/data/failure-html` to make those files appear under `./pennyspy-data/failure-html`. Captured HTML may contain sensitive bank page content, so this is disabled unless the environment variable is set.
 
+
+# Bank logins
+Logins are managed in the web UI, on the **Logins** page (`/app/credentials.html`, linked from
+the home page):
+
+- **Add** a login with a bank, a label of your choice (for example "Personal" or "Joint"), a
+  username and a password. You can save several logins for the same bank.
+- Once saved, a login is **never shown again**. The list shows its label and a partly hidden
+  username (`jo•••@gmail.com`, `12•••89`) so you can tell them apart. You can only **edit** or
+  **remove** it. When editing, leave the username or password blank to keep the saved value.
+- Each bank page has a **Login** dropdown to pick which saved login to sign in with. API callers
+  pass the chosen login's id as `credential_id` to `/<bank>/login`, so a password never travels
+  in a scrape request.
+
+### How they are stored
+Usernames and passwords are encrypted with [Fernet](https://cryptography.io/en/latest/fernet/)
+(AES-128-CBC with an HMAC-SHA256 signature) before they are written to `credentials.json` in
+the data directory (`/app/data`, which is `./pennyspy-data` with Docker Compose). Only the bank,
+the label and the timestamps are stored in plain text. The key is generated automatically the
+first time a login is saved and kept in `secret.key` next to it, readable by its owner only.
+
+- **Back up `secret.key` together with `credentials.json`.** Without the key, the logins cannot
+  be decrypted and must be added again. If `credentials.json` holds logins but `secret.key` is
+  missing, PennySpy refuses to make a new key and reports the problem instead.
+- This protects logins from leaking through API responses, the web UI, the logs, or a copy of
+  `credentials.json` on its own. It does not protect against someone who can read the whole data
+  directory, because the key sits beside the data.
+- The API has no authentication of its own. Anyone who can reach it can start a scrape with a
+  saved login, though they can never read the login. Keep it on your local network.
+- `PENNYSPY_CREDENTIALS_DIR` moves both files to another directory.
+
+### Which login is used
+`/<bank>/login` picks the login in this order:
+1. the saved login named by `credential_id`;
+2. the bank's only saved login, when exactly one is saved;
+3. the legacy env variables for that bank (`PENNYSPY_BMOU`/`PENNYSPY_BMOPP`,
+   `PENNYSPY_RBCU`/`PENNYSPY_RBCP`, `PENNYSPY_SCOTIAU`/`PENNYSPY_SCOTIAP`,
+   `PENNYSPY_WSU`/`PENNYSPY_WSP`), so existing setups keep working.
+
+When several logins are saved for the bank and no `credential_id` is sent, the call fails with a
+400 that asks for one. Using the scrapers directly from Python works as before: pass
+`credentials=LoginCredentials(...)` to `start_auth`, or leave it out to use the env variables.
+
+### Logins API
+| Method & path               | Body                                                                     | Returns |
+|-----------------------------|--------------------------------------------------------------------------|---------|
+| `GET /credentials?bank=bmo` | —                                                                        | `[{id, bank, label, username_hint, created_at, updated_at}]`; `bank` is optional (`bmo`, `rbc`, `scotia`, `ws`) |
+| `POST /credentials`         | `{bank, label, username, password}`                                      | the new login's metadata (201) |
+| `PUT /credentials/{id}`     | `{label?, username?, password?}`; blank or missing keeps the saved value | the updated metadata |
+| `DELETE /credentials/{id}`  | —                                                                        | 204 |
+
+No endpoint returns a username or a password.
 
 # Setup
 For RBC bank setup and API details, consult the [RBC setup guide](pennyspy/scrapers/rbc_bank/setup.md).

@@ -3,6 +3,36 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.8.0] - 2026-10-13
+
+### Added
+
+- Bank logins are managed in the web UI. A new **Logins** page adds, edits and removes them,
+  and several logins can be saved per bank. They are encrypted at rest with Fernet in
+  `credentials.json` in the data directory, using a key generated automatically in `secret.key`
+  beside it. They are write-only: the API and UI only ever show a label and a partly hidden
+  username (`jo•••@gmail.com`).
+- Each bank page has a **Login** dropdown, and `/<bank>/login` accepts a `credential_id`. With
+  no id, the bank's only saved login is used, then the old `PENNYSPY_*` env variables, so
+  existing setups keep working unchanged.
+- `/credentials` API: `GET`, `POST`, `PUT /{id}` and `DELETE /{id}`. None of them returns a
+  username or a password.
+
+### Changed
+
+- The Docker image runs as uid/gid 1000 instead of the selenium base image's 1200/1201, and
+  `docker-compose.yml` sets `user: "1000:1000"`. A `./pennyspy-data` created by the usual first
+  user on the host is now writable, so logs, exports and saved logins land on the volume instead
+  of falling back to a directory inside the container that is lost when the container is
+  recreated. If your data directory belongs to another uid, `chown` it to 1000 or change the
+  `user:` line to match it.
+- `pennyspy-data/` is git-ignored.
+
+### Fixed
+
+- The BMO and Wealthsimple setup guides said several files come back as a ZIP; the API returns
+  them as a JSON envelope of base64 files.
+
 ## [0.7.7] - 2026-10-10
 
 ### Fixed

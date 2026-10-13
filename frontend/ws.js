@@ -123,7 +123,11 @@ loginBtn.addEventListener('click', async () => {
   showStatus('loading', 'Opening Wealthsimple login — complete sign-in in the browser window…');
 
   try {
-    const res = await fetch(`${BASE}/ws/login`, { method: 'POST' });
+    const res = await fetch(`${BASE}/ws/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(LoginPicker.selected()),
+    });
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: `HTTP ${res.status} — ${res.statusText}` }));
@@ -393,3 +397,5 @@ function escapeHtml(str) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 }
+
+LoginPicker.mount('ws');

@@ -9,8 +9,9 @@ from typing import Any, Final
 
 import requests
 
+from pennyspy.credentials.resolve import credentials_or_env
 from pennyspy.scrapers.base import AuthStep, ZenBankScraper
-from pennyspy.scrapers.get_required_env_var import SecretString, get_required_env_var
+from pennyspy.scrapers.get_required_env_var import SecretString
 from pennyspy.scrapers.rbc_bank.connection_element_id import ConnectionElementId
 from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
 from pennyspy.scrapers.rbc_bank.get_default_filename import get_default_filename
@@ -36,8 +37,8 @@ class RBCBank(ZenBankScraper):
         logger.info("Getting session cookies")
         self._navigate("open RBC sign-in page", RBC_MAINPAGE)
         self.driver.implicitly_wait(DelaySeconds.PAGE_LOADING)
-        username = get_required_env_var("PENNYSPY_RBCU")
-        password = get_required_env_var("PENNYSPY_RBCP")
+        credentials = credentials_or_env("rbc", kwargs.get("credentials"))
+        username, password = credentials.username, credentials.password
         self._login(username, password)
         self._check_for_wrong_login()
         self._accept_cookies_if_visible()

@@ -22,6 +22,12 @@
 
       <div class="form-block">
         <div class="form-group">
+          <label class="form-label" for="credential_id">Login</label>
+          <select id="credential_id" class="select"><option>Loading…</option></select>
+          <p class="form-hint" id="credential-hint"></p>
+        </div>
+
+        <div class="form-group">
           <label class="form-label" for="from_date">From Date</label>
           <input id="from_date" class="input-otp" type="date">
         </div>
@@ -42,6 +48,7 @@
     </div>
 
   </div>
+  <script src="login-picker.js"></script>
   <script src="scotia.js"></script>
   <script src="package-version.js"></script>
   <script src="health-check.js"></script>
