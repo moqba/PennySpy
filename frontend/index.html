@@ -15,10 +15,9 @@
       color: var(--text-dim);
     }
 
-    .bank-card__name--rbc { color: var(--rbc-blue); }
     .bank-card__name--ws  { color: var(--ws-green); }
-    .bank-card__name--bmo { color: var(--bmo-blue); }
-    .bank-card__name--scotia { color: var(--scotia-red); }
+    .bank-card__name--nbc { color: var(--nbc-red); }
+    div.bank-card { cursor: default; }
 
     .landing-footer__link {
       color: var(--amber);
@@ -46,13 +45,6 @@
 
     <div class="bank-cards">
 
-      <a href="rbc.html" class="bank-card bank-card--rbc">
-        <span class="bank-card__badge">Single-Step</span>
-        <span class="bank-card__name bank-card__name--rbc">RBC<br>Bank</span>
-        <span class="bank-card__desc">Export transactions in OFX, QBO, CSV and more via mobile 2FA</span>
-        <span class="bank-card__arrow">→</span>
-      </a>
-
       <a href="ws.html" class="bank-card bank-card--ws">
         <span class="bank-card__badge">2FA / OTP</span>
         <span class="bank-card__name bank-card__name--ws">Wealth<br>Simple</span>
@@ -60,21 +52,32 @@
         <span class="bank-card__arrow">→</span>
       </a>
 
-      <a href="bmo.html" class="bank-card bank-card--bmo">
+      <a href="nbc.html" class="bank-card bank-card--nbc">
         <span class="bank-card__badge">2FA / OTP</span>
-        <span class="bank-card__name bank-card__name--bmo">BMO<br>Bank</span>
-        <span class="bank-card__desc">Export credit card transactions in CSV, OFX, QFX and more via browser automation</span>
-        <span class="bank-card__arrow">→</span>
-      </a>
-
-      <a href="scotia.html" class="bank-card bank-card--scotia">
-        <span class="bank-card__badge">2SV / Push</span>
-        <span class="bank-card__name bank-card__name--scotia">Scotia<br>Bank</span>
-        <span class="bank-card__desc">Export account statements as CSV via mobile 2-step verification</span>
+        <span class="bank-card__name bank-card__name--nbc">National<br>Bank</span>
+        <span class="bank-card__desc">Export transaction history as one CSV per account, with a one-time code</span>
         <span class="bank-card__arrow">→</span>
       </a>
 
     </div>
+
+    <section class="retired-banks" aria-label="Decommissioned banks">
+      <p class="retired-banks__title">Decommissioned</p>
+      <div class="retired-banks__list">
+        <div class="retired-bank">
+          <span class="retired-bank__name">RBC</span>
+          <span class="retired-bank__note">No longer supported</span>
+        </div>
+        <div class="retired-bank">
+          <span class="retired-bank__name">Scotiabank</span>
+          <span class="retired-bank__note">No longer supported</span>
+        </div>
+        <div class="retired-bank">
+          <span class="retired-bank__name">BMO</span>
+          <span class="retired-bank__note">No longer supported</span>
+        </div>
+      </div>
+    </section>
 
     <p class="landing-footer"><a href="credentials.html" class="landing-footer__link">Manage bank logins</a> &nbsp;//&nbsp; Encrypted on the server &nbsp;//&nbsp; Local use only</p>
   </div>

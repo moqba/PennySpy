@@ -23,6 +23,7 @@ from pennyspy.credentials.store import (
     CredentialStoreError,
     mask_username,
 )
+from pennyspy.jobs.manager import JobManager
 from pennyspy.scrapers.base import AuthStep, BankScraperInterface
 from pennyspy.scrapers.router import create_scraper_router
 from pennyspy.scrapers.session import ScraperSessionManager
@@ -31,12 +32,6 @@ USERNAME = "john.doe@example.com"
 PASSWORD = "hunter2-correct-horse"
 
 _LEGACY_VARS = (
-    "PENNYSPY_BMOU",
-    "PENNYSPY_BMOPP",
-    "PENNYSPY_RBCU",
-    "PENNYSPY_RBCP",
-    "PENNYSPY_SCOTIAU",
-    "PENNYSPY_SCOTIAP",
     "PENNYSPY_WSU",
     "PENNYSPY_WSP",
 )
@@ -89,30 +84,30 @@ def test_create_round_trips_and_keeps_secrets_off_disk(store: CredentialStore, t
 
 
 def test_resolved_secrets_do_not_print(store: CredentialStore) -> None:
-    info = store.create(bank="bmo", label="Main", username=USERNAME, password=PASSWORD)
+    info = store.create(bank="ws", label="Main", username=USERNAME, password=PASSWORD)
     _, username, password = store.resolve(info.id)
     assert PASSWORD not in f"{username} {password} {username!r} {password!r}"
 
 
 def test_key_is_reused_across_instances(store: CredentialStore, tmp_path: Path) -> None:
-    info = store.create(bank="rbc", label="Main", username=USERNAME, password=PASSWORD)
+    info = store.create(bank="ws", label="Main", username=USERNAME, password=PASSWORD)
     _, _, password = CredentialStore(tmp_path).resolve(info.id)
     assert password.reveal() == PASSWORD
 
 
 def test_missing_key_with_saved_logins_is_refused(store: CredentialStore, tmp_path: Path) -> None:
-    store.create(bank="rbc", label="Main", username=USERNAME, password=PASSWORD)
+    store.create(bank="ws", label="Main", username=USERNAME, password=PASSWORD)
     (tmp_path / "secret.key").unlink()
 
     with pytest.raises(CredentialStoreError, match="secret.key"):
-        store.create(bank="rbc", label="Other", username="x", password="y")
+        store.create(bank="ws", label="Other", username="x", password="y")
     assert not (tmp_path / "secret.key").exists()
 
 
 def test_wrong_key_is_reported(store: CredentialStore, tmp_path: Path) -> None:
-    store.create(bank="rbc", label="Main", username=USERNAME, password=PASSWORD)
+    store.create(bank="ws", label="Main", username=USERNAME, password=PASSWORD)
     (tmp_path / "secret.key").unlink()
-    CredentialStore(tmp_path / "other").create(bank="rbc", label="x", username="x", password="y")
+    CredentialStore(tmp_path / "other").create(bank="ws", label="x", username="x", password="y")
     (tmp_path / "other" / "secret.key").replace(tmp_path / "secret.key")
 
     with pytest.raises(CredentialStoreError, match="does not match"):
@@ -120,7 +115,7 @@ def test_wrong_key_is_reported(store: CredentialStore, tmp_path: Path) -> None:
 
 
 def test_update_keeps_blank_fields(store: CredentialStore) -> None:
-    info = store.create(bank="scotia", label="Main", username=USERNAME, password=PASSWORD)
+    info = store.create(bank="ws", label="Main", username=USERNAME, password=PASSWORD)
 
     updated = store.update(info.id, label="  ", username="", password="new-password")
 
@@ -131,10 +126,10 @@ def test_update_keeps_blank_fields(store: CredentialStore) -> None:
 
 
 def test_delete_and_filter(store: CredentialStore) -> None:
-    a = store.create(bank="bmo", label="A", username="aaaaaaaa", password="p")
+    a = store.create(bank="nbc", label="A", username="aaaaaaaa", password="p")
     b = store.create(bank="ws", label="B", username="bbbbbbbb", password="p")
 
-    assert [i.id for i in store.list_logins("bmo")] == [a.id]
+    assert [i.id for i in store.list_logins("nbc")] == [a.id]
     store.delete(a.id)
     assert [i.id for i in store.list_logins()] == [b.id]
     with pytest.raises(CredentialNotFound):
@@ -145,8 +140,8 @@ def test_delete_and_filter(store: CredentialStore) -> None:
     "fields",
     [
         {"bank": "td", "label": "x", "username": "u", "password": "p"},
-        {"bank": "bmo", "label": " ", "username": "u", "password": "p"},
-        {"bank": "bmo", "label": "x", "username": "u", "password": ""},
+        {"bank": "ws", "label": " ", "username": "u", "password": "p"},
+        {"bank": "ws", "label": "x", "username": "u", "password": ""},
     ],
 )
 def test_create_rejects_bad_input(store: CredentialStore, fields: dict[str, str]) -> None:
@@ -183,9 +178,9 @@ def test_resolve_ambiguous_without_id(store: CredentialStore) -> None:
 
 
 def test_resolve_wrong_bank(store: CredentialStore) -> None:
-    info = store.create(bank="ws", label="A", username=USERNAME, password=PASSWORD)
-    with pytest.raises(LoginSelectionError, match="not bmo"):
-        resolve_login("bmo", info.id, store)
+    info = store.create(bank="nbc", label="A", username=USERNAME, password=PASSWORD)
+    with pytest.raises(LoginSelectionError, match="not ws"):
+        resolve_login("ws", info.id, store)
 
 
 def test_resolve_unknown_id(store: CredentialStore) -> None:
@@ -194,23 +189,25 @@ def test_resolve_unknown_id(store: CredentialStore) -> None:
 
 
 def test_resolve_falls_back_to_env(store: CredentialStore, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PENNYSPY_RBCU", "env-user")
-    monkeypatch.setenv("PENNYSPY_RBCP", "env-pass")
-    login = resolve_login("rbc", None, store)
+    monkeypatch.setenv("PENNYSPY_WSU", "env-user")
+    monkeypatch.setenv("PENNYSPY_WSP", "env-pass")
+    login = resolve_login("ws", None, store)
     assert (login.username.reveal(), login.password.reveal()) == ("env-user", "env-pass")
 
 
 def test_resolve_nothing_configured(store: CredentialStore) -> None:
     with pytest.raises(LoginSelectionError, match="Logins page"):
-        resolve_login("scotia", None, store)
+        resolve_login("ws", None, store)
 
 
 def test_credentials_or_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(ValueError, match="PENNYSPY_BMOU"):
-        credentials_or_env("bmo", None)
-    monkeypatch.setenv("PENNYSPY_BMOU", "u")
-    monkeypatch.setenv("PENNYSPY_BMOPP", "p")
-    assert credentials_or_env("bmo", None).password.reveal() == "p"
+    with pytest.raises(ValueError, match="PENNYSPY_WSU"):
+        credentials_or_env("ws", None)
+    with pytest.raises(ValueError, match="No nbc login"):
+        credentials_or_env("nbc", None)
+    monkeypatch.setenv("PENNYSPY_WSU", "u")
+    monkeypatch.setenv("PENNYSPY_WSP", "p")
+    assert credentials_or_env("ws", None).password.reveal() == "p"
 
 
 # ── HTTP: /credentials ────────────────────────────────────────────────
@@ -230,7 +227,7 @@ def _assert_no_secrets(response: Any) -> None:
 
 def test_api_crud_never_returns_secrets(client: TestClient) -> None:
     created = client.post(
-        "/credentials", json={"bank": "bmo", "label": "Joint", "username": USERNAME, "password": PASSWORD}
+        "/credentials", json={"bank": "ws", "label": "Joint", "username": USERNAME, "password": PASSWORD}
     )
     assert created.status_code == 201
     _assert_no_secrets(created)
@@ -238,10 +235,10 @@ def test_api_crud_never_returns_secrets(client: TestClient) -> None:
     assert set(body) == {"id", "bank", "label", "username_hint", "created_at", "updated_at"}
     assert body["username_hint"] == "jo•••@example.com"
 
-    listed = client.get("/credentials", params={"bank": "bmo"})
+    listed = client.get("/credentials", params={"bank": "ws"})
     _assert_no_secrets(listed)
     assert [c["id"] for c in listed.json()] == [body["id"]]
-    assert client.get("/credentials", params={"bank": "ws"}).json() == []
+    assert client.get("/credentials", params={"bank": "nbc"}).json() == []
 
     updated = client.put(f"/credentials/{body['id']}", json={"label": "Joint 2", "password": "other"})
     assert updated.status_code == 200
@@ -296,22 +293,23 @@ def login_client(store: CredentialStore) -> TestClient:
     app = FastAPI()
     app.include_router(
         create_scraper_router(
-            bank="rbc",
+            bank="ws",
             scraper_type=_FakeScraper,
             scrape_params_model=_ScrapeParams,
             session_manager=ScraperSessionManager(),
             credential_store=store,
+            job_manager=JobManager(),
         ),
-        prefix="/rbc",
+        prefix="/ws",
     )
     return TestClient(app)
 
 
 def test_login_with_credential_id(login_client: TestClient, store: CredentialStore) -> None:
-    store.create(bank="rbc", label="A", username="first-user", password="p1")
-    chosen = store.create(bank="rbc", label="B", username="second-user", password="p2")
+    store.create(bank="ws", label="A", username="first-user", password="p1")
+    chosen = store.create(bank="ws", label="B", username="second-user", password="p2")
 
-    response = login_client.post("/rbc/login", json={"credential_id": chosen.id})
+    response = login_client.post("/ws/login", json={"credential_id": chosen.id})
 
     assert response.status_code == 200
     credentials = _FakeScraper.seen[-1]["credentials"]
@@ -321,23 +319,23 @@ def test_login_with_credential_id(login_client: TestClient, store: CredentialSto
 
 
 def test_login_without_body_still_works(login_client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("PENNYSPY_RBCU", "env-user")
-    monkeypatch.setenv("PENNYSPY_RBCP", "env-pass")
-    response = login_client.post("/rbc/login")
+    monkeypatch.setenv("PENNYSPY_WSU", "env-user")
+    monkeypatch.setenv("PENNYSPY_WSP", "env-pass")
+    response = login_client.post("/ws/login")
     assert response.status_code == 200
     assert _FakeScraper.seen[-1]["credentials"].username.reveal() == "env-user"
 
 
 def test_login_errors(login_client: TestClient, store: CredentialStore) -> None:
-    assert login_client.post("/rbc/login", json={"credential_id": "nope"}).status_code == 404
-    assert login_client.post("/rbc/login").status_code == 400
-    other_bank = store.create(bank="ws", label="A", username=USERNAME, password=PASSWORD)
-    assert login_client.post("/rbc/login", json={"credential_id": other_bank.id}).status_code == 400
+    assert login_client.post("/ws/login", json={"credential_id": "nope"}).status_code == 404
+    assert login_client.post("/ws/login").status_code == 400
+    other_bank = store.create(bank="nbc", label="A", username=USERNAME, password=PASSWORD)
+    assert login_client.post("/ws/login", json={"credential_id": other_bank.id}).status_code == 400
     assert _FakeScraper.seen == []
 
 
 def test_store_file_is_versioned_json(store: CredentialStore, tmp_path: Path) -> None:
-    store.create(bank="bmo", label="A", username=USERNAME, password=PASSWORD)
+    store.create(bank="ws", label="A", username=USERNAME, password=PASSWORD)
     data = json.loads((tmp_path / "credentials.json").read_text(encoding="utf-8"))
     assert data["version"] == 1
     assert set(data["credentials"][0]) == {

@@ -7,10 +7,10 @@ Canadian bank transaction scraper with API endpoints for automated retrieval of 
 
 Running locally gives you full control over when and how data is retrieved. You can trigger requests on demand, making it fully compatible with modern banking security flows such as one-time passwords (OTP) and push-based two-factor authentication (2FA).
 # Supported banks
-- RBC bank
 - Wealthsimple
-- BMO bank
-- Scotiabank
+- National Bank (NBC)
+
+RBC, Scotiabank and BMO are decommissioned and no longer supported.
 
 The API provides a landing page that allows users to easily download their transaction history.
 ![api_landing_page](doc/landing_page.png)
@@ -65,6 +65,24 @@ It runs on the port 5056 by default, user can modify the port by setting `PENNYS
 The Docker image starts the API service automatically.
 See the bank’s setup page for API call details.
 
+## Jobs
+Signing in, checking a code and exporting can each keep a browser busy for minutes, so they run
+as background jobs. Starting one answers `202` at once with the job; follow it until its `state`
+is `done` or `failed`, then fetch an export's files.
+
+| Method & path                     | What it does |
+|-----------------------------------|--------------|
+| `POST /<bank>/login/jobs`         | Start signing in (same body as `/<bank>/login`). The finished job has `session_id` and `auth: {status, message}` |
+| `POST /<bank>/verify/jobs`        | Check the code: `{session_id, otp_code}`. The finished job has `auth` |
+| `POST /<bank>/export`             | Start an export (same body as `/<bank>/scrape`). The finished job lists `files: [{index, filename, size, url}]` |
+| `GET /jobs/{job_id}`              | The job now: `state` (`queued`, `running`, `done`, `failed`), `stage`, `detail` (the browser's latest step), `error` |
+| `GET /jobs/{job_id}/events`       | The same, as server-sent events each time it changes; the stream ends when the job finishes |
+| `GET /exports/{job_id}/file?index=0` | One file of a finished export, as a normal download (`409` while it is still running) |
+
+Jobs run one at a time, in order. Finished jobs are forgotten after an hour; the exported files
+stay in the data directory for 7 days. The blocking `/<bank>/login`, `/<bank>/verify` and
+`/<bank>/scrape` still work: they run the same jobs and wait for them.
+
 Screenshots captured during scraper errors are written to the data directory by default. With the included Docker Compose file, they appear under `./pennyspy-data/screenshots`. Override `PENNYSPY_SCREENSHOT_DIR` if you want a different location.
 
 Set `PENNYSPY_FAILURE_HTML_DIR` to also save the current browser page HTML when a scraper failure screenshot is captured. With Docker Compose, use `/app/data/failure-html` to make those files appear under `./pennyspy-data/failure-html`. Captured HTML may contain sensitive bank page content, so this is disabled unless the environment variable is set.
@@ -104,9 +122,8 @@ first time a login is saved and kept in `secret.key` next to it, readable by its
 `/<bank>/login` picks the login in this order:
 1. the saved login named by `credential_id`;
 2. the bank's only saved login, when exactly one is saved;
-3. the legacy env variables for that bank (`PENNYSPY_BMOU`/`PENNYSPY_BMOPP`,
-   `PENNYSPY_RBCU`/`PENNYSPY_RBCP`, `PENNYSPY_SCOTIAU`/`PENNYSPY_SCOTIAP`,
-   `PENNYSPY_WSU`/`PENNYSPY_WSP`), so existing setups keep working.
+3. the legacy env variables for that bank (`PENNYSPY_WSU`/`PENNYSPY_WSP`), so existing setups
+   keep working. NBC has none.
 
 When several logins are saved for the bank and no `credential_id` is sent, the call fails with a
 400 that asks for one. Using the scrapers directly from Python works as before: pass
@@ -115,7 +132,7 @@ When several logins are saved for the bank and no `credential_id` is sent, the c
 ### Logins API
 | Method & path               | Body                                                                     | Returns |
 |-----------------------------|--------------------------------------------------------------------------|---------|
-| `GET /credentials?bank=bmo` | —                                                                        | `[{id, bank, label, username_hint, created_at, updated_at}]`; `bank` is optional (`bmo`, `rbc`, `scotia`, `ws`) |
+| `GET /credentials?bank=ws`  | —                                                                        | `[{id, bank, label, username_hint, created_at, updated_at}]`; `bank` is optional (`nbc`, `ws`) |
 | `POST /credentials`         | `{bank, label, username, password}`                                      | the new login's metadata (201) |
 | `PUT /credentials/{id}`     | `{label?, username?, password?}`; blank or missing keeps the saved value | the updated metadata |
 | `DELETE /credentials/{id}`  | —                                                                        | 204 |
@@ -123,11 +140,6 @@ When several logins are saved for the bank and no `credential_id` is sent, the c
 No endpoint returns a username or a password.
 
 # Setup
-For RBC bank setup and API details, consult the [RBC setup guide](pennyspy/scrapers/rbc_bank/setup.md).
-
 For Wealthsimple setup and API details, consult the [Wealthsimple setup guide](pennyspy/scrapers/wealthsimple/setup.md).
-
-For BMO bank setup and API details, consult the [BMO setup guide](pennyspy/scrapers/bmo_bank/setup.md).
-
-For Scotiabank setup and API details, consult the [Scotiabank setup guide](pennyspy/scrapers/scotiabank/setup.md).
+For National Bank, consult the [NBC setup guide](pennyspy/scrapers/nbc/setup.md).
 

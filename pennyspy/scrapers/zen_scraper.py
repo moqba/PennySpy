@@ -437,10 +437,6 @@ class ZenScraper:
         one attribute at a time: the stable attribute goes first, then the ARIA structure, then
         the visible label text. Elements the page keeps mounted but hidden -- a previous wizard
         step, a cookie preference centre -- are skipped rather than clicked into the void.
-
-        ``BMOBank`` still carries its own XPath-only version of this, which predates the
-        shared one; collapsing it onto this belongs in a change of its own, since its
-        locator chains are asserted on directly by the BMO 2FA tests.
         """
         for by, locator in locators:
             for element in self.driver.find_elements(by, locator):
@@ -591,6 +587,33 @@ class ZenScraper:
             await el.send_keys(KeyEvents.from_text(character, KeyPressEvent.DOWN_AND_UP))
             if paced and index < len(characters) - 1:
                 await asyncio.sleep(self._config.typing_delay.sample())
+
+    def _select_option(self, description: str, element: ElementHandle, value: str, *, paced: bool = True) -> None:
+        """Choose the ``<option>`` whose value is ``value`` in a native ``<select>``.
+
+        zendriver has no Selenium ``Select``. The value is set through the prototype's setter
+        and a bubbling ``change`` event is dispatched, which is what React and Formik listen
+        for; assigning ``el.value`` directly is swallowed by React's value tracking. Raises if
+        the select holds no such option or does not keep the value."""
+        logger.info("Starting action: %s (option value %r)", description, value)
+        script = (
+            "(el) => {"
+            f"  if (![...el.options].some((o) => o.value === {value!r})) return null;"
+            "  const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;"
+            f"  setter.call(el, {value!r});"
+            "  el.dispatchEvent(new Event('input', { bubbles: true }));"
+            "  el.dispatchEvent(new Event('change', { bubbles: true }));"
+            "  return el.value;"
+            "}"
+        )
+        try:
+            selected = self._run(element._el.apply(script))
+            self._action_delay(paced=paced)
+        except Exception as e:
+            raise ScraperError(f"Failed while {description} (option value {value!r})") from e
+        if selected != value:
+            raise ScraperError(f"Failed while {description}: the select has no option {value!r} or did not keep it")
+        logger.info("Completed action: %s", description)
 
     def _clear_field(self, description: str, element: ElementHandle, *, paced: bool = True) -> None:
         logger.info("Clearing field before re-entry to %s", description)

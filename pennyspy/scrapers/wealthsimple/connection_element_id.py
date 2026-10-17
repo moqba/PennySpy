@@ -9,14 +9,22 @@ class ConnectionElementXpath(StrEnum):
     PASSWORD = '//input[@type="password"]'
     SUBMIT = '//button[@type="submit"]'
     USER_INCORRECT = '//p[contains(text(), "Your email or password was incorrect")]'
-    PHONE_2FA = '//input[@type="text" and @autocomplete="one-time-code" and @placeholder="– – – – – –"]'
+    # The October 2026 SMS code page dropped the "– – – – – –" placeholder; the field now carries
+    # data-testid="otp-input". autocomplete="one-time-code" is on both the old and the new one.
+    PHONE_2FA = '//input[@data-testid="otp-input" or (@type="text" and @autocomplete="one-time-code")]'
     FAILED_2FA = '//div[@role="alert" and contains(text(), "Try again or get a new code")]'
-    PASSKEY_MAYBE_LATER = '//button[@role="button" and .//span[normalize-space()="Maybe later"]]'
+    # No role="button" any more: the October 2026 pages dropped it from their buttons.
+    PASSKEY_MAYBE_LATER = '//button[.//span[normalize-space()="Maybe later"]]'
     # "Use your passkey to verify that it's you", shown once Chrome's passkey request for an
     # account with a passkey fails. "Try another way" is what sends the SMS code. The data-testid
     # goes first; the visible label is the fallback for when WS renames it.
     PASSKEY_TRY_ANOTHER_WAY = '//button[@data-testid="passkey-challenge-2fa-error-try-another-way-button"]'
     PASSKEY_TRY_ANOTHER_WAY_BY_LABEL = '//button[.//span[normalize-space()="Try another way"]]'
+    # "Check your trusted device": WS sent a push to the Wealthsimple app on the user's phone and
+    # waits for them to tap Yes. It can follow the password or the SMS code. The page also has a
+    # "Try another way" button, which the passkey label locator above would match, so this one
+    # must be checked before it. The heading is the only stable thing on the page.
+    TRUSTED_DEVICE = '//h1[normalize-space()="Check your trusted device"]'
 
 
 class ActivityElementXpath(StrEnum):

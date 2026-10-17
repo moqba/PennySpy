@@ -17,18 +17,10 @@
   --ws-green-dim: #00A870;
   --ws-glow:      rgba(0, 214, 143, 0.15);
   --ws-glow-2:    rgba(0, 214, 143, 0.06);
-  --rbc-blue:     #3B8BFF;
-  --rbc-blue-dim: #2A6AE0;
-  --rbc-glow:     rgba(59, 139, 255, 0.15);
-  --rbc-glow-2:   rgba(59, 139, 255, 0.06);
-  --bmo-blue:     #0075BE;
-  --bmo-blue-dim: #005F9E;
-  --bmo-glow:     rgba(0, 117, 190, 0.15);
-  --bmo-glow-2:   rgba(0, 117, 190, 0.06);
-  --scotia-red:     #EC111A;
-  --scotia-red-dim: #C00E16;
-  --scotia-glow:    rgba(236, 17, 26, 0.15);
-  --scotia-glow-2:  rgba(236, 17, 26, 0.06);
+  --nbc-red:      #E41C23;
+  --nbc-red-dim:  #B8161C;
+  --nbc-glow:     rgba(228, 28, 35, 0.15);
+  --nbc-glow-2:   rgba(228, 28, 35, 0.06);
 
   --text:         #C8D4EC;
   --text-muted:   #4A5878;
@@ -196,18 +188,11 @@ body::before {
   border-radius: inherit;
 }
 
-.bank-card--rbc::after { background: var(--rbc-glow-2); }
 .bank-card--ws::after  { background: var(--ws-glow-2); }
-.bank-card--bmo::after { background: var(--bmo-glow-2); }
-.bank-card--scotia::after { background: var(--scotia-glow-2); }
+.bank-card--nbc::after { background: var(--nbc-glow-2); }
 
 .bank-card:hover {
   transform: translateY(-2px);
-}
-
-.bank-card--rbc:hover {
-  border-color: var(--rbc-blue);
-  box-shadow: 0 0 0 1px var(--rbc-blue), 0 8px 32px rgba(59, 139, 255, 0.15);
 }
 
 .bank-card--ws:hover {
@@ -215,14 +200,9 @@ body::before {
   box-shadow: 0 0 0 1px var(--ws-green), 0 8px 32px rgba(0, 214, 143, 0.15);
 }
 
-.bank-card--bmo:hover {
-  border-color: var(--bmo-blue);
-  box-shadow: 0 0 0 1px var(--bmo-blue), 0 8px 32px rgba(0, 117, 190, 0.15);
-}
-
-.bank-card--scotia:hover {
-  border-color: var(--scotia-red);
-  box-shadow: 0 0 0 1px var(--scotia-red), 0 8px 32px rgba(236, 17, 26, 0.15);
+.bank-card--nbc:hover {
+  border-color: var(--nbc-red);
+  box-shadow: 0 0 0 1px var(--nbc-red), 0 8px 32px rgba(228, 28, 35, 0.15);
 }
 
 .bank-card:hover::after { opacity: 1; }
@@ -238,28 +218,16 @@ body::before {
   margin-bottom: 20px;
 }
 
-.bank-card--rbc .bank-card__badge {
-  background: rgba(59, 139, 255, 0.12);
-  color: var(--rbc-blue);
-  border: 1px solid rgba(59, 139, 255, 0.25);
-}
-
 .bank-card--ws .bank-card__badge {
   background: rgba(0, 214, 143, 0.1);
   color: var(--ws-green);
   border: 1px solid rgba(0, 214, 143, 0.2);
 }
 
-.bank-card--bmo .bank-card__badge {
-  background: rgba(0, 117, 190, 0.12);
-  color: var(--bmo-blue);
-  border: 1px solid rgba(0, 117, 190, 0.25);
-}
-
-.bank-card--scotia .bank-card__badge {
-  background: rgba(236, 17, 26, 0.12);
-  color: var(--scotia-red);
-  border: 1px solid rgba(236, 17, 26, 0.25);
+.bank-card--nbc .bank-card__badge {
+  background: rgba(228, 28, 35, 0.12);
+  color: var(--nbc-red);
+  border: 1px solid rgba(228, 28, 35, 0.25);
 }
 
 .bank-card__name {
@@ -286,10 +254,52 @@ body::before {
   transition: color var(--transition), transform var(--transition);
 }
 
-.bank-card--rbc:hover .bank-card__arrow { color: var(--rbc-blue); transform: translateX(3px); }
 .bank-card--ws:hover  .bank-card__arrow { color: var(--ws-green); transform: translateX(3px); }
-.bank-card--bmo:hover .bank-card__arrow { color: var(--bmo-blue); transform: translateX(3px); }
-.bank-card--scotia:hover .bank-card__arrow { color: var(--scotia-red); transform: translateX(3px); }
+.bank-card--nbc:hover .bank-card__arrow { color: var(--nbc-red); transform: translateX(3px); }
+
+/* ─── DECOMMISSIONED BANKS (landing) ────────────────────────────── */
+.retired-banks {
+  margin-top: 36px;
+}
+
+.retired-banks__title {
+  font-size: 10px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 10px;
+}
+
+.retired-banks__list {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.retired-bank {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  opacity: 0.55;
+  cursor: default;
+}
+
+.retired-bank__name {
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.retired-bank__note {
+  font-size: 10px;
+  color: var(--text-dim);
+}
 
 /* ─── CARD ──────────────────────────────────────────────────────── */
 .card {
@@ -320,28 +330,22 @@ body::before {
   margin-top: 3px;
 }
 
-.card__badge--rbc {
-  background: rgba(59, 139, 255, 0.12);
-  color: var(--rbc-blue);
-  border: 1px solid rgba(59, 139, 255, 0.25);
-}
-
 .card__badge--ws {
   background: rgba(0, 214, 143, 0.1);
   color: var(--ws-green);
   border: 1px solid rgba(0, 214, 143, 0.2);
 }
 
-.card__badge--bmo {
-  background: rgba(0, 117, 190, 0.12);
-  color: var(--bmo-blue);
-  border: 1px solid rgba(0, 117, 190, 0.25);
+.card__badge--nbc {
+  background: rgba(228, 28, 35, 0.12);
+  color: var(--nbc-red);
+  border: 1px solid rgba(228, 28, 35, 0.25);
 }
 
-.card__badge--scotia {
-  background: rgba(236, 17, 26, 0.12);
-  color: var(--scotia-red);
-  border: 1px solid rgba(236, 17, 26, 0.25);
+.card__badge--retired {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-2);
 }
 
 /* ─── FORM ELEMENTS ─────────────────────────────────────────────── */

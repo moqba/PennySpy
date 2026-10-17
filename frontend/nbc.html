@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>National Bank — PennySpy</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="page">
+  <div class="container">
+
+    <a href="index.html" class="back-link">Home</a>
+
+    <div class="card">
+      <div class="card__header">
+        <span class="card__badge card__badge--nbc">NBC</span>
+        <div>
+          <h1 class="page-title">National Bank</h1>
+          <p class="page-subtitle">Two-step login required — NBC sends a code by email or phone</p>
+        </div>
+      </div>
+
+      <!-- ── Step 1 ─────────────────────────────────────────────── -->
+      <div class="form-group">
+        <label class="form-label" for="credential_id">Login</label>
+        <select id="credential_id" class="select"><option>Loading…</option></select>
+        <p class="form-hint" id="credential-hint"></p>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" for="since_date">Transactions Since</label>
+        <input id="since_date" class="input-otp" type="date">
+        <p class="form-hint">
+          Up to 12 months back. You get one CSV per account, e.g.
+          <code>chequing_account_<em>date</em>.csv</code>.
+        </p>
+      </div>
+
+      <button id="login-btn" class="btn btn--primary btn--full btn--mt">
+        Start Login
+      </button>
+
+      <p class="info-row">Browser automation will sign into NBC, then ask for the code it sends you</p>
+
+      <!-- ── Step 2 (hidden until login initiated) ─────────────── -->
+      <div id="otp-section" hidden>
+        <div class="divider"></div>
+
+        <p class="step-label">
+          <span class="step-badge">Step 2</span>
+          <span id="otp-notice">Enter the verification code NBC sent you.</span>
+        </p>
+
+        <div class="form-group">
+          <label class="form-label" for="otp_code">Verification Code</label>
+          <input
+            id="otp_code"
+            class="input-otp"
+            type="text"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="6"
+            placeholder="e.g. 123456"
+            autocomplete="one-time-code"
+            spellcheck="false"
+          >
+        </div>
+
+        <button id="fetch-btn" class="btn btn--primary btn--full btn--mt">
+          Download Transactions
+        </button>
+      </div>
+
+      <div id="status" hidden></div>
+    </div>
+
+  </div>
+  <a href="logs.html" class="logs-fab">Logs</a>
+  <script src="jobs.js"></script>
+  <script src="login-picker.js"></script>
+  <script src="nbc.js"></script>
+  <script src="package-version.js"></script>
+  <script src="health-check.js"></script>
+</body>
+</html>

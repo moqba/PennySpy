@@ -24,6 +24,18 @@ Because Wealthsimple requires a manual OTP, the flow is split across endpoints:
 2. **`POST /ws/verify`** — Submits the OTP code to complete 2FA authentication.
 3. **`POST /ws/scrape`** — Downloads Wealthsimple's own activity export and returns it as-is, plus a day-by-day deposit and earnings series for any accounts named in `account_ids`.
 
+Each step can also run as a background job that answers at once: `POST /ws/login/jobs`,
+`POST /ws/verify/jobs` and `POST /ws/export` take the same bodies, return a `job_id` to follow on
+`/jobs/{job_id}`, and an export's files then download from `/exports/{job_id}/file`. The web UI
+works this way. See [Jobs](../../../README.md#jobs).
+
+How the pages are driven, step by step, is described in [scraping_flow.md](scraping_flow.md).
+
+A login from a new place can be asked to approve the sign-in on your phone instead ("Check your
+trusted device"). `/ws/login` or `/ws/verify` then answers `"status": "waiting_for_external"`
+with a message saying so, and the next `/ws/verify`, sent without a code, waits up to 5 minutes
+for you to tap **Yes** in the Wealthsimple app.
+
 One session serves one download, so everything you want comes out of the same `/ws/scrape`
 call — naming accounts adds their earnings CSVs to it rather than costing a second login.
 

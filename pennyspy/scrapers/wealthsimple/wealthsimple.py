@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import logging
 import re
-import time
 import zipfile
 from collections.abc import Collection, Iterable, Sequence
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, Literal
 
 from bs4 import BeautifulSoup
 from pandas import DataFrame
@@ -63,14 +62,18 @@ from pennyspy.scrapers.zen_scraper import (
     TimeoutException,
     clickable,
     present,
-    url_to_be,
     visible,
 )
 
 WEALTHSIMPLE_ROOT: Final[str] = "https://my.wealthsimple.com"
 
 WEALTHSIMPLE_LOGIN: Final[str] = f"{WEALTHSIMPLE_ROOT}/login"
-WEALTHSIMPLE_HOME: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/home"
+# Every page of the signed-in web app lives under here, the landing page included -- but so
+# does the login itself: /login redirects to /app/login, and the passkey challenge and the SMS
+# code page are shown there too.
+WEALTHSIMPLE_APP: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/"
+# First path segments under /app/ that are still part of signing in.
+_SIGN_IN_PATHS: Final[frozenset[str]] = frozenset({"login", "signup", "sign-up", "password", "verify", "2fa", "mfa"})
 WEALTHSIMPLE_ACTIVITY: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/activity"
 WEALTHSIMPLE_ACCOUNT_DETAILS: Final[str] = f"{WEALTHSIMPLE_ROOT}/app/account-details"
 
@@ -84,13 +87,30 @@ _ALL_ACCOUNTS_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
     (By.XPATH, ExportElementXpath.ALL_ACCOUNTS_IN_ROW),
 )
 
-# What can follow the password: the SMS code field straight away, or, for an account with a
-# passkey, the passkey challenge's "Try another way" button (testid first, then its label).
-# The OTP field leads so a page that already shows it is never mistaken for the challenge.
+# What can follow the password: the SMS code field straight away, the "Check your trusted
+# device" page, or, for an account with a passkey, the passkey challenge's "Try another way"
+# button (testid first, then its label). The OTP field leads so a page that already shows it is
+# never mistaken for the challenge, and the trusted-device page comes before the label fallback
+# because it has a "Try another way" button of its own.
 _POST_LOGIN_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
     (By.XPATH, ConnectionElementXpath.PHONE_2FA),
+    (By.XPATH, ConnectionElementXpath.TRUSTED_DEVICE),
     (By.XPATH, ConnectionElementXpath.PASSKEY_TRY_ANOTHER_WAY),
     (By.XPATH, ConnectionElementXpath.PASSKEY_TRY_ANOTHER_WAY_BY_LABEL),
+)
+
+# Controls only a page that is still signing in shows: the login form, the SMS code field and
+# the passkey challenge. Any of them on screen means the session is not signed in yet,
+# whatever the URL says.
+_SIGN_IN_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
+    (By.XPATH, ConnectionElementXpath.PASSWORD),
+    *_POST_LOGIN_LOCATORS,
+)
+
+# Shown in the web UI while WS waits for the sign-in to be approved in its app.
+TRUSTED_DEVICE_MESSAGE: Final[str] = (
+    "Wealthsimple sent a notification to your trusted device. Open the Wealthsimple app on your phone "
+    "and tap Yes to approve this sign-in. Waiting for your approval…"
 )
 
 # The chart-toolbar tab that plots what the account was worth. Its sibling, "Returns", plots
@@ -262,6 +282,14 @@ def build_activity_row(
     return activity or None
 
 
+def is_signed_in_url(url: str) -> bool:
+    """Whether ``url`` is a page of the signed-in web app rather than a step of signing in."""
+    if not url.startswith(WEALTHSIMPLE_APP):
+        return False
+    first_segment = re.split(r"[/?#]", url[len(WEALTHSIMPLE_APP) :], maxsplit=1)[0]
+    return first_segment not in _SIGN_IN_PATHS
+
+
 def _looks_like_amount(text: str) -> bool:
     return bool(re.search(r"\$[\d,]+", text))
 
@@ -269,6 +297,9 @@ def _looks_like_amount(text: str) -> bool:
 class Wealthsimple(ZenBankScraper):
     def __init__(self, config: BrowserConfig = BrowserConfig()):
         super().__init__(config=config)
+        self._authenticated: bool = False
+        # True while WS shows "Check your trusted device" and waits for the user to tap Yes.
+        self._awaiting_device_approval: bool = False
 
     # ── BankScraper interface ──────────────────────────────────────────
 
@@ -280,12 +311,90 @@ class Wealthsimple(ZenBankScraper):
         username, password = credentials.username, credentials.password
         self._login(username, password)
         self._check_for_wrong_login()
-        self._skip_passkey_challenge()
+        next_step = self._skip_passkey_challenge()
+        if next_step == "logged_in":
+            logger.info("Wealthsimple let the login through without an OTP")
+            self._authenticated = True
+            return AuthStep(status="authenticated")
+        if next_step == "trusted_device":
+            return self._awaiting_approval_step()
         return AuthStep(status="needs_otp", message="Enter the OTP code sent to your phone")
 
     def continue_auth(self, *, otp_code: str | None = None) -> AuthStep:
-        assert otp_code is not None, "OTP code is required for Wealthsimple 2FA"
-        self._send_2fa_text(otp_code)
+        # The session may already be signed in: WS skipped the code, or the code was typed in
+        # the browser window. The landing page is then left as it is instead of being searched
+        # for an OTP field it no longer has.
+        if self._authenticated or self._is_logged_in():
+            logger.info("Already logged in to Wealthsimple — no OTP to enter")
+            self._authenticated = True
+            return AuthStep(status="authenticated")
+        if self._awaiting_device_approval or self._on_trusted_device_page():
+            return self._wait_for_device_approval()
+        if not otp_code:
+            raise ValueError("OTP code is required for Wealthsimple 2FA")
+        if self._send_2fa_text(otp_code) == "trusted_device":
+            return self._awaiting_approval_step()
+        self._authenticated = True
+        return AuthStep(status="authenticated")
+
+    # ── Trusted-device approval ────────────────────────────────────────
+
+    def _on_trusted_device_page(self) -> bool:
+        try:
+            return self._first_displayed_match(((By.XPATH, ConnectionElementXpath.TRUSTED_DEVICE),)) is not None
+        except ScraperError:
+            return False
+
+    def _awaiting_approval_step(self) -> AuthStep:
+        """Report that WS is waiting for the user to tap Yes in its app. The next verify waits for it."""
+        logger.info("Wealthsimple sent a trusted-device notification; waiting for the user to approve it")
+        self._awaiting_device_approval = True
+        return AuthStep(status="waiting_for_external", message=TRUSTED_DEVICE_MESSAGE)
+
+    def _wait_for_device_approval(self) -> AuthStep:
+        """Wait for the sign-in to be approved on the trusted device.
+
+        Leads to the signed-in app (or the "Create passkey" offer in front of it) once the user
+        taps Yes. If they pick "Try another way" instead -- in the app, or on the page through
+        noVNC -- WS shows the SMS code field, and the code is asked for as usual."""
+        self._awaiting_device_approval = False
+
+        def outcome(_driver: Any) -> str | None:
+            if self._first_displayed_match(((By.XPATH, ConnectionElementXpath.PHONE_2FA),)):
+                return "otp"
+            if self._first_displayed_match(((By.XPATH, ConnectionElementXpath.PASSKEY_MAYBE_LATER),)):
+                return "approved"
+            if self._is_logged_in():
+                return "approved"
+            return None
+
+        try:
+            result = self._wait_until(
+                "see the sign-in approved in the Wealthsimple app on your trusted device (tap Yes on the prompt)",
+                outcome,
+                DelaySeconds.DEVICE_APPROVAL,
+                screenshot_name="wealthsimple_trusted_device_timeout",
+            )
+        except TimeoutException as e:
+            raise ScraperError(
+                "The sign-in was not approved on the trusted device within "
+                f"{int(DelaySeconds.DEVICE_APPROVAL) // 60} minutes; start the login again"
+            ) from e
+        if result == "otp":
+            logger.info("Wealthsimple switched from the trusted-device prompt to an SMS code")
+            return AuthStep(status="needs_otp", message="Enter the OTP code sent to your phone")
+        logger.info("The sign-in was approved on the trusted device")
+        self._dismiss_passkey_prompt()
+        try:
+            self._wait_until(
+                "confirm Wealthsimple is signed in",
+                lambda _driver: self._is_logged_in(),
+                DelaySeconds.OTP_OUTCOME,
+                screenshot_name="wealthsimple_home_redirect_timeout",
+            )
+        except TimeoutException as e:
+            raise ScraperError("The sign-in was approved but Wealthsimple never opened the signed-in app") from e
+        self._authenticated = True
         return AuthStep(status="authenticated")
 
     @staticmethod
@@ -913,63 +1022,117 @@ class Wealthsimple(ZenBankScraper):
 
     # ── Internal implementation ────────────────────────────────────────
 
-    def _send_2fa_text(self, otp_code: str):
+    def _send_2fa_text(self, otp_code: str) -> str | None:
+        """Type and submit the code. Returns ``"trusted_device"`` when WS then asks for approval
+        in its app instead of signing in, ``None`` once signed in."""
         otp_field = self._find_element("enter Wealthsimple OTP code", By.XPATH, ConnectionElementXpath.PHONE_2FA)
         if not otp_field:
             raise ValueError("No OTP detected")
         # No readback for the WS OTP field: it masks its value, so verification would
         # always fail, and clearing/re-typing an OTP input can auto-submit or misbehave.
         self._send_keys("enter Wealthsimple OTP code", otp_field, otp_code, sensitive=True)
-        time.sleep(1)
-        submit_btn = self._find_element("submit Wealthsimple OTP code", By.XPATH, ConnectionElementXpath.SUBMIT)
-        self._click("submit Wealthsimple OTP code", submit_btn)
+        # WS usually submits the code by itself once the last digit is in, and its submit
+        # button is gone by then. The button is only clicked if the page is still sitting on
+        # the code after a while, so an auto-submitted code is never sent twice.
         try:
-            self._wait_until(
-                "check for Wealthsimple 2FA failure message",
-                present(By.XPATH, ConnectionElementXpath.FAILED_2FA),
-                DelaySeconds.LOGIN_ATTEMPT,
-                timeout_log_level=logging.INFO,
-            )
+            outcome = self._wait_for_otp_outcome(DelaySeconds.OTP_AUTO_SUBMIT, timeout_log_level=logging.INFO)
+        except TimeoutException:
+            submit = self._first_displayed_match(((By.XPATH, ConnectionElementXpath.SUBMIT),))
+            if submit:
+                self._click("submit Wealthsimple OTP code", submit[1])
+            else:
+                logger.info("No Wealthsimple OTP submit button to click — waiting for the code to go through")
+            try:
+                outcome = self._wait_for_otp_outcome(
+                    DelaySeconds.OTP_OUTCOME, screenshot_name="wealthsimple_otp_outcome_timeout"
+                )
+            except TimeoutException as e:
+                raise ScraperError("Wealthsimple never got past the OTP page after the code was entered") from e
+        if outcome == "failed":
             logger.error("2FA error message appeared")
             raise ValueError("OTP code didn't work")
-        except TimeoutException:
-            pass
+        if outcome == "trusted_device":
+            return outcome
+        # The "Create passkey" offer can also draw only once the app is already open.
         self._dismiss_passkey_prompt()
-        self._wait_until(
-            "confirm redirect to Wealthsimple home page",
-            url_to_be(WEALTHSIMPLE_HOME),
-            DelaySeconds.PAGE_LOADING,
-            screenshot_name="wealthsimple_home_redirect_timeout",
-        )
+        try:
+            self._wait_until(
+                "confirm Wealthsimple is signed in",
+                lambda _driver: self._is_logged_in(),
+                DelaySeconds.OTP_OUTCOME,
+                screenshot_name="wealthsimple_home_redirect_timeout",
+            )
+        except TimeoutException as e:
+            raise ScraperError("Wealthsimple accepted the OTP but never opened the signed-in app") from e
         logger.info("Connection successful.")
+        return None
 
-    def _skip_passkey_challenge(self) -> None:
+    def _wait_for_otp_outcome(self, timeout: int, **kwargs: Any) -> str:
+        """Wait for what follows a submitted OTP: ``"failed"`` (WS's wrong-code alert),
+        ``"trusted_device"`` (approve the sign-in in the app), ``"passkey_prompt"`` (the optional
+        "Create passkey" offer) or ``"logged_in"``."""
+
+        def outcome(_driver: Any) -> str | None:
+            if self._first_displayed_match(((By.XPATH, ConnectionElementXpath.FAILED_2FA),)):
+                return "failed"
+            if self._on_trusted_device_page():
+                return "trusted_device"
+            if self._first_displayed_match(((By.XPATH, ConnectionElementXpath.PASSKEY_MAYBE_LATER),)):
+                return "passkey_prompt"
+            if self._is_logged_in():
+                return "logged_in"
+            return None
+
+        return self._wait_until("see what Wealthsimple does with the OTP", outcome, timeout, **kwargs)
+
+    def _is_logged_in(self) -> bool:
+        """Whether the tab is on a page of the signed-in web app, the landing page included."""
+        try:
+            url = self.driver.current_url
+            return is_signed_in_url(url) and self._first_displayed_match(_SIGN_IN_LOCATORS) is None
+        except ScraperError:
+            return False
+
+    def _skip_passkey_challenge(self) -> Literal["otp", "trusted_device", "logged_in"]:
         """Get from WS's passkey challenge to the SMS code page by choosing "Try another way".
 
         Only accounts with a passkey see the challenge, and only after Chrome's passkey request
-        has timed out, so this waits a long while for whichever of the OTP field or the
-        challenge shows up first. The SMS code is only sent once "Try another way" is clicked.
-        Neither showing up is left for ``_send_2fa_text`` to report."""
+        has timed out, so this waits a long while for whichever of the OTP field, the
+        trusted-device page or the challenge shows up first. The SMS code is only sent once
+        "Try another way" is clicked. None of them showing up is left for ``_send_2fa_text`` to
+        report.
+
+        Returns what comes next: ``"otp"`` (the SMS code), ``"trusted_device"`` (approve the
+        sign-in in the Wealthsimple app) or ``"logged_in"`` (no second step at all)."""
         try:
             locator, element = self._wait_until(
-                "find the Wealthsimple OTP field or the passkey challenge's 'Try another way' button",
-                lambda _driver: self._first_displayed_match(_POST_LOGIN_LOCATORS),
+                "find the Wealthsimple OTP field, the trusted-device page or the passkey challenge's "
+                "'Try another way' button",
+                lambda _driver: (
+                    self._first_displayed_match(_POST_LOGIN_LOCATORS)
+                    or (("logged_in", None) if self._is_logged_in() else None)
+                ),
                 DelaySeconds.PASSKEY_CHALLENGE,
                 timeout_log_level=logging.WARNING,
             )
         except TimeoutException:
             logger.warning("Neither the Wealthsimple OTP field nor a passkey challenge found — continuing")
-            return
+            return "otp"
+        if locator == "logged_in":
+            return "logged_in"
         if locator == ConnectionElementXpath.PHONE_2FA:
             logger.info("No Wealthsimple passkey challenge — the SMS code page is already shown")
-            return
+            return "otp"
+        if locator == ConnectionElementXpath.TRUSTED_DEVICE:
+            logger.info("Wealthsimple shows 'Check your trusted device' — the sign-in must be approved in its app")
+            return "trusted_device"
         logger.info("Wealthsimple passkey challenge shown — choosing 'Try another way' (matched %s)", locator)
         self._click("choose 'Try another way' on the Wealthsimple passkey challenge", element)
         try:
             self._wait_until(
                 "wait for the Wealthsimple OTP field after 'Try another way'",
                 present(By.XPATH, ConnectionElementXpath.PHONE_2FA),
-                DelaySeconds.PAGE_LOADING,
+                DelaySeconds.PAGE_TIMEOUT,
                 screenshot_name="wealthsimple_passkey_try_another_way_timeout",
             )
         except TimeoutException as e:
@@ -977,6 +1140,7 @@ class Wealthsimple(ZenBankScraper):
                 "Failed while waiting for the Wealthsimple OTP field after choosing 'Try another way' "
                 "on the passkey challenge"
             ) from e
+        return "otp"
 
     def _dismiss_passkey_prompt(self) -> None:
         """Dismiss the optional 'Create passkey' prompt shown after 2FA by clicking

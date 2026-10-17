@@ -13,11 +13,9 @@ from pennyspy.scrapers.get_required_env_var import SecretString
 logger = getLogger(__name__)
 
 # The env vars each bank read before logins could be saved from the web UI. They still work
-# as a fallback, so existing setups and direct Python use keep running unchanged.
+# as a fallback, so existing setups and direct Python use keep running unchanged. Banks added
+# since then have none.
 LEGACY_ENV_VARS: Final[dict[str, tuple[str, str]]] = {
-    "bmo": ("PENNYSPY_BMOU", "PENNYSPY_BMOPP"),
-    "rbc": ("PENNYSPY_RBCU", "PENNYSPY_RBCP"),
-    "scotia": ("PENNYSPY_SCOTIAU", "PENNYSPY_SCOTIAP"),
     "ws": ("PENNYSPY_WSU", "PENNYSPY_WSP"),
 }
 
@@ -34,6 +32,8 @@ class LoginSelectionError(ValueError):
 
 def env_credentials(bank: str) -> LoginCredentials | None:
     """The legacy env-var login for ``bank``, or ``None`` when either var is unset or empty."""
+    if bank not in LEGACY_ENV_VARS:
+        return None
     user_var, password_var = LEGACY_ENV_VARS[bank]
     username, password = os.environ.get(user_var), os.environ.get(password_var)
     if not username or not password:
@@ -84,6 +84,8 @@ def credentials_or_env(bank: str, credentials: LoginCredentials | None) -> Login
         return credentials
     from_env = env_credentials(bank)
     if from_env is None:
+        if bank not in LEGACY_ENV_VARS:
+            raise ValueError(f"No {bank} login was given.")
         user_var, password_var = LEGACY_ENV_VARS[bank]
         raise ValueError(f"No {bank} login was given and {user_var}/{password_var} are not both set.")
     return from_env
