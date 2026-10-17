@@ -74,14 +74,16 @@ is `done` or `failed`, then fetch an export's files.
 |-----------------------------------|--------------|
 | `POST /<bank>/login/jobs`         | Start signing in (same body as `/<bank>/login`). The finished job has `session_id` and `auth: {status, message}` |
 | `POST /<bank>/verify/jobs`        | Check the code: `{session_id, otp_code}`. The finished job has `auth` |
-| `POST /<bank>/export`             | Start an export (same body as `/<bank>/scrape`). The finished job lists `files: [{index, filename, size, url}]` |
+| `POST /<bank>/export`             | Start an export (same body as `/<bank>/scrape`). The finished job lists `files: [{index, filename, size, url}]` and `notes`, remarks such as an export that starts later than asked |
 | `GET /jobs/{job_id}`              | The job now: `state` (`queued`, `running`, `done`, `failed`), `stage`, `detail` (the browser's latest step), `error` |
 | `GET /jobs/{job_id}/events`       | The same, as server-sent events each time it changes; the stream ends when the job finishes |
 | `GET /exports/{job_id}/file?index=0` | One file of a finished export, as a normal download (`409` while it is still running) |
 
-Jobs run one at a time, in order. Finished jobs are forgotten after an hour; the exported files
-stay in the data directory for 7 days. The blocking `/<bank>/login`, `/<bank>/verify` and
-`/<bank>/scrape` still work: they run the same jobs and wait for them.
+Jobs run one at a time, in order. Finished export jobs are kept as long as their files, which
+stay in the data directory for 7 days; other finished jobs are forgotten after an hour. Jobs
+live in memory, so a restart forgets them, but not the files. The blocking `/<bank>/login`,
+`/<bank>/verify` and `/<bank>/scrape` still work: they run the same jobs and wait for them, for
+up to an hour (`504` after that, while the job carries on).
 
 Screenshots captured during scraper errors are written to the data directory by default. With the included Docker Compose file, they appear under `./pennyspy-data/screenshots`. Override `PENNYSPY_SCREENSHOT_DIR` if you want a different location.
 

@@ -13,6 +13,7 @@ from pennyspy.scrapers.nbc.transactions import (
     CSV_COLUMNS,
     TransactionParseError,
     account_slug,
+    coverage_note,
     keep_since,
     parse_amount,
     parse_date,
@@ -84,6 +85,33 @@ def test_parse_amount(text: str, credit: bool, debit: bool, expected: Decimal) -
 def test_parse_amount_rejects_what_it_cannot_read() -> None:
     with pytest.raises(TransactionParseError):
         parse_amount("pending", credit=True, debit=False)
+
+
+@pytest.mark.parametrize("text", ["1 234,56 $", "12,50 $", "-7,25"])
+def test_parse_amount_refuses_a_decimal_comma(text: str) -> None:
+    with pytest.raises(TransactionParseError, match="English"):
+        parse_amount(text, credit=True, debit=False)
+
+
+def test_coverage_note_is_silent_when_the_table_reached_since_date() -> None:
+    transactions = parse_rows(ROWS, today=TODAY)
+    assert coverage_note(transactions, date(2026, 9, 1), reached_since=True, today=TODAY) is None
+    # Not reached, but the rows still go back to since_date itself.
+    assert coverage_note(transactions, date(2026, 9, 30), reached_since=False, today=TODAY) is None
+
+
+def test_coverage_note_says_where_a_short_export_starts() -> None:
+    transactions = parse_rows(ROWS, today=TODAY)
+    note = coverage_note(transactions, date(2026, 9, 1), reached_since=False, today=TODAY)
+    assert note is not None
+    assert "starts at 2026-09-30, not 2026-09-01" in note
+    assert "stopped loading" in note
+
+
+def test_coverage_note_past_twelve_months() -> None:
+    transactions = parse_rows(ROWS, today=TODAY)
+    note = coverage_note(transactions, date(2025, 1, 1), reached_since=False, today=TODAY)
+    assert note == "NBC only shows the last 12 months, so the export starts at 2026-09-30, not 2025-01-01."
 
 
 def test_parse_rows_names_the_row_that_failed() -> None:

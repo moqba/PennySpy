@@ -28,12 +28,17 @@ from logging import getLogger
 from pathlib import Path
 from typing import Any, Final, Literal
 
+from pennyspy.scrapers.export_store import DEFAULT_MAX_AGE_DAYS
+
 logger = getLogger(__name__)
 
 JobKind = Literal["login", "verify", "export"]
 JobState = Literal["queued", "running", "done", "failed"]
 
 FINISHED_JOB_TTL_SECONDS: Final[int] = 3600
+# An export job is kept as long as its retained files are, so /exports/{id}/file keeps
+# working for as long as the copy on disk exists. Jobs live in memory: a restart drops them.
+FINISHED_EXPORT_TTL_SECONDS: Final[int] = DEFAULT_MAX_AGE_DAYS * 86_400
 _DETAIL_LIMIT: Final[int] = 240
 
 
@@ -74,7 +79,9 @@ class Job:
 
     def snapshot(self) -> dict[str, Any]:
         """What the client is shown. Paths on the server stay on the server."""
+        # The job's own fields go last, so nothing a job returns can stand in for them.
         snapshot: dict[str, Any] = {
+            **self.result,
             "job_id": self.id,
             "kind": self.kind,
             "bank": self.bank,
@@ -86,7 +93,6 @@ class Job:
             "started_at": self.started_at.isoformat(timespec="seconds") if self.started_at else None,
             "finished_at": self.finished_at.isoformat(timespec="seconds") if self.finished_at else None,
             "version": self.version,
-            **self.result,
         }
         if self.kind == "export":
             snapshot["files"] = [
@@ -118,7 +124,13 @@ class JobManager:
         self._lock = threading.Lock()
         self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pennyspy-job")
         self._running_by_thread: dict[int, Job] = {}
-        logging.getLogger("pennyspy").addHandler(_JobDetailRelay(self))
+        self._relay = _JobDetailRelay(self)
+        logging.getLogger("pennyspy").addHandler(self._relay)
+
+    def close(self) -> None:
+        """Stop relaying log lines and stop the worker once its current job is done."""
+        logging.getLogger("pennyspy").removeHandler(self._relay)
+        self._executor.shutdown(wait=False, cancel_futures=True)
 
     def submit(self, kind: JobKind, bank: str, work: Callable[[JobContext], None]) -> Job:
         self._prune()
@@ -183,18 +195,22 @@ class JobManager:
             self._update(job, detail=message[:_DETAIL_LIMIT])
 
     def _prune(self) -> None:
-        cutoff = time.time() - FINISHED_JOB_TTL_SECONDS
+        now = time.time()
         with self._lock:
             stale = [
                 job
                 for job in self._jobs.values()
-                if job.finished and job.finished_at is not None and job.finished_at.timestamp() < cutoff
+                if job.finished and job.finished_at is not None and job.finished_at.timestamp() < now - _ttl(job)
             ]
             for job in stale:
                 del self._jobs[job.id]
         for job in stale:
             if job.scratch_dir is not None:
                 shutil.rmtree(job.scratch_dir, ignore_errors=True)
+
+
+def _ttl(job: Job) -> int:
+    return FINISHED_EXPORT_TTL_SECONDS if job.kind == "export" else FINISHED_JOB_TTL_SECONDS
 
 
 class _JobDetailRelay(logging.Handler):

@@ -147,16 +147,15 @@ window.PennyJobs = (function () {
 
   // The browser cannot tell whether Chrome's "download multiple files" gate silently dropped
   // the ones after the first, so say what should have arrived and where the copies live.
-  function describeSaved(files, label) {
+  // `notes` are the server's remarks on the export, such as that it starts later than asked.
+  function describeSaved(files, label, notes) {
     const noun = label || 'Activity';
-    if (files.length === 1) {
-      return `${noun} downloaded as ${files[0].filename}.`;
-    }
-    return (
-      `${noun} downloaded — ${files.length} files: ${files.map((f) => f.filename).join(', ')}. ` +
-      'If fewer than that were saved, allow multiple downloads for this site; a copy of every ' +
-      'export is also kept on the server under the data directory.'
-    );
+    const message = files.length === 1
+      ? `${noun} downloaded as ${files[0].filename}.`
+      : `${noun} downloaded — ${files.length} files: ${files.map((f) => f.filename).join(', ')}. ` +
+        'If fewer than that were saved, allow multiple downloads for this site; a copy of every ' +
+        'export is also kept on the server under the data directory.';
+    return [message, ...(notes || [])].join(' ');
   }
 
   return { JobError, start, follow, run, describe, saveExport, describeSaved };

@@ -21,10 +21,16 @@ logger = logging.getLogger(__name__)
 
 CSV_COLUMNS: Final[tuple[str, ...]] = ("date", "description", "category", "amount", "account")
 
+# "Last 12 months" reaches about this far back; an older since_date cannot be covered.
+TWELVE_MONTHS: Final[timedelta] = timedelta(days=365)
+
 # Every character a rendered amount can carry besides its digits: currency, thousands
 # separators and the spaces (regular, no-break, narrow no-break) between them.
 _AMOUNT_NOISE: Final[re.Pattern[str]] = re.compile(r"[$,\s  ]|CAD", re.IGNORECASE)
 _NON_ALNUM: Final[re.Pattern[str]] = re.compile(r"[^a-z0-9]+")
+# A comma followed by exactly two digits at the end is a French decimal comma ("1 234,56 $").
+# Stripped as a thousands separator, it would make the amount a hundred times too big.
+_DECIMAL_COMMA: Final[re.Pattern[str]] = re.compile(r",\d{2}(?!\d)")
 
 
 class TransactionParseError(ValueError):
@@ -62,7 +68,12 @@ def parse_amount(text: str, *, credit: bool, debit: bool) -> Decimal:
 
     NBC renders every amount without a sign and marks the direction with the ``is-credit`` /
     ``is-debit`` class instead. A sign or parentheses in the text are honoured when neither
-    class is there."""
+    class is there. French formatting is refused rather than misread: the NBC profile must be
+    set to English."""
+    if _DECIMAL_COMMA.search(text):
+        raise TransactionParseError(
+            f"NBC transaction amount {text!r} uses a decimal comma; set the NBC profile language to English"
+        )
     cleaned = _AMOUNT_NOISE.sub("", text)
     negative = False
     if cleaned.startswith("(") and cleaned.endswith(")"):
@@ -110,6 +121,28 @@ def parse_rows(rows: Iterable[Mapping[str, object]], *, today: date) -> list[Tra
 def keep_since(transactions: Iterable[Transaction], since: date) -> list[Transaction]:
     """The transactions on or after ``since``, in their original order."""
     return [t for t in transactions if t.date >= since]
+
+
+def coverage_note(transactions: Iterable[Transaction], since: date, *, reached_since: bool, today: date) -> str | None:
+    """A sentence for the user when the export starts later than ``since``, else ``None``.
+
+    ``reached_since`` is whether the table was read until a row older than ``since`` showed up.
+    When it was not, the rows may stop short: either NBC has nothing older in its 12-month view,
+    or the table stopped loading, and the page cannot tell which."""
+    dates = [t.date for t in transactions]
+    if reached_since or not dates:
+        return None
+    oldest = min(dates)
+    if oldest <= since:
+        return None
+    if since < today - TWELVE_MONTHS:
+        return (
+            f"NBC only shows the last 12 months, so the export starts at {oldest.isoformat()}, not {since.isoformat()}."
+        )
+    return (
+        f"The export starts at {oldest.isoformat()}, not {since.isoformat()}: NBC showed no older rows. "
+        "Either there are none, or its table stopped loading; run the export again if you expected more."
+    )
 
 
 def account_slug(name: str) -> str:

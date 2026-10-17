@@ -17,8 +17,9 @@ must have a matching `## [x.y.z]` section before merging to `main`.
   the one-time code ("NBC sent a 6-digit code by email to j...e@…"), and reads the Transaction
   history tab back to the date you pick, up to 12 months. You get one CSV per account, named
   after it, e.g. `chequing_account_2026-10-17.csv`. A wrong code can be typed again without
-  starting over. The endpoints are `/nbc/login`, `/nbc/verify` and `/nbc/export`, as for
-  Wealthsimple; see the [NBC setup guide](pennyspy/scrapers/nbc/setup.md).
+  starting over. If the files start later than the date you picked, the page says from when. The
+  NBC profile must be set to English. The endpoints are `/nbc/login`, `/nbc/verify` and
+  `/nbc/export`, as for Wealthsimple; see the [NBC setup guide](pennyspy/scrapers/nbc/setup.md).
 
 ### Fixed
 
