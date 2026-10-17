@@ -2,9 +2,8 @@
 
 const BASE = '';
 
-// Reading the scrape response and saving what it carries is the same job on every bank
-// page, so it lives in scrape-download.js and both pages share it.
-const { StageError, readScrapeResponse, saveAll, describeSaved } = window.ScrapeDownload;
+// Starting a job, following it and downloading what it produced is the same on every bank
+// page, so it lives in jobs.js.
 
 // ── Cookie helpers ────────────────────────────────────────────────
 const setCookie = (name, value) =>
@@ -18,6 +17,12 @@ const getCookie = (name) => {
 let sessionId    = null;
 let isLoggingIn  = false;
 let isFetching   = false;
+// False once the login comes back already signed in (WS skipped the code), so there is no
+// OTP to ask for.
+let otpRequired  = true;
+// Wealthsimple's message while it waits for the sign-in to be approved on the user's phone
+// ("Check your trusted device"), or null when it is not waiting for that.
+let approvalPending = null;
 
 const loginBtn         = document.getElementById('login-btn');
 const fetchBtn         = document.getElementById('fetch-btn');
@@ -123,40 +128,43 @@ loginBtn.addEventListener('click', async () => {
   showStatus('loading', 'Opening Wealthsimple login — complete sign-in in the browser window…');
 
   try {
-    const res = await fetch(`${BASE}/ws/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(LoginPicker.selected()),
-    });
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status} — ${res.statusText}` }));
-      throw new Error(err.detail || `HTTP ${res.status}`);
-    }
-
-    const data = await res.json();
-    sessionId = data.session_id;
+    const job = await PennyJobs.run('/ws/login/jobs', LoginPicker.selected(), showJob);
+    sessionId = job.session_id;
+    otpRequired = job.auth.status === 'needs_otp';
 
     otpSection.hidden = false;
-    otpInput.focus();
-    showStatus('success', 'Login initiated — enter the OTP sent to your device below.');
+    otpInput.closest('.form-group').hidden = !otpRequired;
+    if (job.auth.status === 'waiting_for_external') {
+      // "Check your trusted device": nothing to type. The download starts by itself and
+      // waits on the server until the sign-in is approved in the Wealthsimple app.
+      approvalPending = job.auth.message;
+      setTimeout(() => fetchBtn.click(), 0);
+    } else if (otpRequired) {
+      otpInput.focus();
+      showStatus('success', 'Login initiated — enter the OTP sent to your device below.');
+    } else {
+      showStatus('success', 'Already signed in to Wealthsimple — no OTP needed.');
+    }
   } catch (err) {
     showStatus('error', err.message);
-    reportToServer('error', `login failed: ${err.message}`, { userAgent: navigator.userAgent });
+    reportToServer('error', `login failed: ${err.message}`, {
+      jobId: err.job && err.job.job_id,
+      userAgent: navigator.userAgent,
+    });
     resetFlow();
   } finally {
     setLoggingIn(false);
   }
 });
 
-// ── Step 2: OTP + Fetch ───────────────────────────────────────────
+// ── Step 2: OTP + Export ──────────────────────────────────────────
 fetchBtn.addEventListener('click', async () => {
   if (isFetching) return;
 
   const otpCode = otpInput.value.trim();
   const request = buildDownloadRequest();
 
-  if (!otpCode) {
+  if (otpRequired && !otpCode) {
     showStatus('error', 'Please enter your OTP code before continuing.');
     otpInput.focus();
     return;
@@ -170,90 +178,103 @@ fetchBtn.addEventListener('click', async () => {
 
   setFetching(true);
   clearDiagnostic();
-  showStatus('loading', 'Submitting OTP…');
+  if (approvalPending) showStatus('loading', approvalPending);
+  else showStatus('loading', otpRequired ? 'Submitting OTP…' : 'Checking the Wealthsimple session…');
 
   const diag = { stage: 'verify', startedAt: new Date().toISOString(), userAgent: navigator.userAgent };
   const startedMs = performance.now();
 
   try {
-    // Step 2a: verify OTP
-    const verifyRes = await fetch(`${BASE}/ws/verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ session_id: sessionId, otp_code: otpCode }),
-    });
-
-    if (!verifyRes.ok) {
-      const err = await verifyRes.json().catch(() => ({ detail: `HTTP ${verifyRes.status}` }));
-      throw new StageError('verify', err.detail || `OTP verification failed (HTTP ${verifyRes.status})`, diag);
+    // Step 2a: check the code. WS can answer it, or the password, with "Check your trusted
+    // device"; the next verify then waits on the server for the sign-in to be approved in the
+    // Wealthsimple app, and the page says so meanwhile.
+    let verifyJob = await PennyJobs.run(
+      '/ws/verify/jobs',
+      { session_id: sessionId, otp_code: approvalPending ? null : (otpCode || null) },
+      showVerifyJob,
+    );
+    while (verifyJob.auth.status === 'waiting_for_external') {
+      approvalPending = verifyJob.auth.message || 'Approve the sign-in in the Wealthsimple app on your phone…';
+      showStatus('loading', approvalPending);
+      verifyJob = await PennyJobs.run('/ws/verify/jobs', { session_id: sessionId, otp_code: null }, showVerifyJob);
     }
+    approvalPending = null;
+    diag.verifyJobId = verifyJob.job_id;
 
-    // Step 2b: scrape transactions
-    showStatus('loading', `OTP accepted — ${request.progress}, this may take a few minutes…`);
+    // Choosing "Try another way" on the trusted-device prompt switches to an SMS code.
+    if (verifyJob.auth.status === 'needs_otp') {
+      otpRequired = true;
+      otpInput.closest('.form-group').hidden = false;
+      otpInput.value = '';
+      otpInput.focus();
+      showStatus('success', verifyJob.auth.message || 'Enter the OTP sent to your device below.');
+      return;
+    }
+    otpRequired = false;
 
-    diag.stage = 'fetch';
+    // Step 2b: export. The job keeps running on the server whatever happens to this page,
+    // and its files stay downloadable from /exports/{job_id}/file once it is done.
+    diag.stage = 'export';
     diag.download = request.type;
-    const fetchStartedMs = performance.now();
-    let res;
-    try {
-      res = await fetch(`${BASE}${request.path}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: sessionId, ...request.body }),
-      });
-    } catch (err) {
-      // The scrape holds one request open for minutes; a connection that dies in that
-      // window leaves the server having finished the work and the browser with nothing.
-      diag.elapsedMs = Math.round(performance.now() - fetchStartedMs);
-      throw new StageError(
-        'fetch',
-        `The connection dropped after ${Math.round(diag.elapsedMs / 1000)}s — the scrape may have finished on ` +
-        `the server without reaching this page. Check the server log and the exports directory. (${err.message})`,
-        diag,
-      );
-    }
-    diag.elapsedMs = Math.round(performance.now() - fetchStartedMs);
-
-    if (res.status === 404) {
-      const err = await res.json().catch(() => ({ detail: 'Session not found — please restart the login.' }));
-      throw Object.assign(new StageError('http', err.detail || 'Session expired', diag), { resetRequired: true });
-    }
-
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ detail: `HTTP ${res.status} — ${res.statusText}` }));
-      throw new StageError('http', err.detail || `HTTP ${res.status}`, diag);
-    }
+    const exportJob = await PennyJobs.run(
+      request.path,
+      { session_id: sessionId, ...request.body },
+      showJob,
+    );
+    diag.exportJobId = exportJob.job_id;
 
     // Wealthsimple gives one CSV per account, and each one is saved as its own download —
     // the activity exports byte-for-byte as WS wrote them, and an earnings series per
     // account named above, built on the server.
-    const files = await readScrapeResponse(res, diag, {
-      fallbackName: request.fallbackName,
-      mimeType: 'text/csv',
-    });
-
-    diag.stage = 'trigger-download';
-    diag.files = files.map((file) => ({ name: file.name, bytes: file.blob.size }));
-    await saveAll(files);
+    diag.stage = 'download';
+    const files = await PennyJobs.saveExport(exportJob);
+    diag.files = files.map((file) => ({ name: file.filename, bytes: file.size, url: file.url }));
 
     diag.stage = 'done';
     diag.totalElapsedMs = Math.round(performance.now() - startedMs);
-    showStatus('success', describeSaved(files, request.label));
-    reportToServer('info', `scrape delivered ${files.length} file(s)`, diag);
+    showStatus('success', PennyJobs.describeSaved(files, request.label));
+    reportToServer('info', `export delivered ${files.length} file(s)`, diag);
     resetFlow();
   } catch (err) {
-    const diagnostic = { ...(err.diag || diag), stage: err.stage || diag.stage || 'unknown', message: err.message };
+    const diagnostic = { ...diag, message: err.message };
+    if (err.job) {
+      diagnostic.jobId = err.job.job_id;
+      diagnostic.jobStage = err.job.stage;
+      diagnostic.lastDetail = err.job.detail;
+    }
     diagnostic.totalElapsedMs = Math.round(performance.now() - startedMs);
     showStatus('error', err.message);
     showDiagnostic(diagnostic);
-    reportToServer('error', `scrape failed at stage "${diagnostic.stage}": ${err.message}`, diagnostic);
-    if (err.resetRequired) {
+    reportToServer('error', `export failed at stage "${diagnostic.stage}": ${err.message}`, diagnostic);
+    // A failed code check or export ends the session on the server, and so does an unknown one.
+    if (err.job || err.status === 404) {
       resetFlow();
     }
   } finally {
     setFetching(false);
   }
 });
+
+// Puts a running job's progress on the spinner.
+function showJob(job) {
+  if (job.state === 'queued' || job.state === 'running') {
+    showStatus('loading', PennyJobs.describe(job));
+  }
+}
+
+// While the sign-in waits for approval on the phone, that message stays on the spinner, with
+// how long it has been waiting; otherwise the usual progress is shown.
+function showVerifyJob(job) {
+  if (!approvalPending) {
+    showJob(job);
+    return;
+  }
+  if (job.state === 'queued' || job.state === 'running') {
+    const since = job.started_at || job.created_at;
+    const seconds = since ? Math.max(0, Math.round((Date.now() - Date.parse(since)) / 1000)) : 0;
+    showStatus('loading', `${approvalPending} (${seconds}s)`);
+  }
+}
 
 // ── Allow pressing Enter in OTP field to submit ───────────────────
 otpInput.addEventListener('keydown', (e) => {
@@ -269,13 +290,12 @@ function buildDownloadRequest() {
 
   return {
     type: accountIds.length ? 'activity+earnings' : 'activity',
-    path: '/ws/scrape',
+    path: '/ws/export',
     body: { since_date: sinceDateEl.value, account_ids: accountIds },
     progress: accountIds.length
       ? `fetching activity data and daily earnings for ${accounts}`
       : 'fetching activity data',
     label: accountIds.length ? 'Activity and daily earnings' : 'Activity',
-    fallbackName: `wealthsimple_activity_${today()}.csv`,
   };
 }
 
@@ -296,7 +316,10 @@ function setFetching(active) {
 
 function resetFlow() {
   sessionId = null;
+  otpRequired = true;
+  approvalPending = null;
   otpSection.hidden = true;
+  otpInput.closest('.form-group').hidden = false;
   otpInput.value = '';
   loginBtn.disabled = false;
   optionInputs().forEach((el) => { el.disabled = false; });
@@ -316,10 +339,6 @@ function showStatus(type, message) {
   else icon = '';
 
   statusEl.innerHTML = `${icon}<span class="status__text">${escapeHtml(message)}</span>`;
-}
-
-function today() {
-  return new Date().toISOString().split('T')[0];
 }
 
 // ── Diagnostics ───────────────────────────────────────────────────

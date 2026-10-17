@@ -22,8 +22,8 @@ services:
       # Bank logins are added on the Logins page of the web UI and stored encrypted in
       # ./pennyspy-data (credentials.json + secret.key; back up both together).
       # Legacy fallback, used only when a bank has no saved login (better kept in .env):
-      # - PENNYSPY_RBCU=user
-      # - PENNYSPY_RBCP=hunter123
+      # - PENNYSPY_WSU=user
+      # - PENNYSPY_WSP=hunter123
       # !! If you are not using any of these options, remove the 'environment:' tag entirely.
     env_file:
       - .env

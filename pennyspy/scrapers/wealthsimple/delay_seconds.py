@@ -20,10 +20,18 @@ class DelaySeconds(IntEnum):
     DOWNLOAD_INCOMPLETE_SETTLE = 60
     COOKIE_PROMPT_TIMEOUT = 60
     TWO_FACTOR_TIMEOUT = 5 * 60
+    # How long a typed OTP is given to go through on its own before the submit button is
+    # clicked. WS normally submits the code as soon as the last digit is in.
+    OTP_AUTO_SUBMIT = 15
+    # How long a submitted OTP is given to lead to the signed-in app, the wrong-code alert or
+    # the "Create passkey" offer.
+    OTP_OUTCOME = 2 * 60
     # How long the password is given to lead to either the SMS code field or WS's passkey
     # challenge. For an account with a passkey, the challenge only appears once Chrome's own
     # passkey request has timed out unanswered, which takes a minute or more.
     PASSKEY_CHALLENGE = 3 * 60
+    # How long the user is given to tap Yes on the trusted-device prompt in the Wealthsimple app.
+    DEVICE_APPROVAL = 5 * 60
     # How long a chart-toolbar tab is waited for on the account-details page. Short on
     # purpose: the tabs only steer the graph the page draws for itself, so a missing one is
     # worth a brief look and no more.

@@ -35,7 +35,7 @@ from pennyspy.scrapers.get_required_env_var import SecretString
 
 logger = getLogger(__name__)
 
-Bank = Literal["bmo", "rbc", "scotia", "ws"]
+Bank = Literal["nbc", "ws"]
 BANKS: Final[tuple[str, ...]] = get_args(Bank)
 
 CREDENTIALS_FILENAME: Final[str] = "credentials.json"

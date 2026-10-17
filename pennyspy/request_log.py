@@ -20,7 +20,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 logger = getLogger(__name__)
 
-WATCHED_PATH_SUFFIXES = ("/scrape",)
+WATCHED_PATH_SUFFIXES = ("/scrape", "/file")
 
 
 class ResponseDeliveryLogger:

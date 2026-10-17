@@ -6,7 +6,14 @@
 
 const BASE = '';
 
-const BANK_NAMES = { bmo: 'BMO', rbc: 'RBC', scotia: 'Scotiabank', ws: 'Wealthsimple' };
+const BANK_NAMES = { nbc: 'NBC', ws: 'Wealthsimple' };
+
+// Logins saved before a bank was decommissioned stay listed so they can still be removed.
+const RETIRED_BANK_NAMES = { bmo: 'BMO', rbc: 'RBC', scotia: 'Scotiabank' };
+
+function bankName(bank) {
+  return BANK_NAMES[bank] || RETIRED_BANK_NAMES[bank] || bank;
+}
 
 const listEl    = document.getElementById('login-list');
 const form      = document.getElementById('login-form');
@@ -59,10 +66,11 @@ function render() {
     listEl.innerHTML = '<p class="logs-empty">No saved logins yet. Add one below.</p>';
     return;
   }
-  const rows = Object.keys(BANK_NAMES).flatMap((bank) =>
+  const banks = [...Object.keys(BANK_NAMES), ...new Set(logins.map((l) => l.bank).filter((b) => !(b in BANK_NAMES)))];
+  const rows = banks.flatMap((bank) =>
     logins.filter((l) => l.bank === bank).map((l) => `
       <tr>
-        <td><span class="card__badge card__badge--${bank}">${BANK_NAMES[bank]}</span></td>
+        <td><span class="card__badge card__badge--${bank in BANK_NAMES ? bank : 'retired'}">${escapeHtml(bankName(bank))}</span></td>
         <td>${escapeHtml(l.label)}</td>
         <td class="login-list__hint">${escapeHtml(l.username_hint)}</td>
         <td class="login-list__date">${escapeHtml(l.updated_at.slice(0, 10))}</td>
@@ -115,7 +123,7 @@ function startEdit(id) {
   editHint.hidden = false;
   cancelBtn.hidden = false;
   formBadge.textContent = 'Edit';
-  formTitle.textContent = `Edit ${BANK_NAMES[login.bank]} login “${login.label}”`;
+  formTitle.textContent = `Edit ${bankName(login.bank)} login “${login.label}”`;
   saveBtn.textContent = 'Save Changes';
   labelEl.focus();
 }
@@ -139,7 +147,7 @@ form.addEventListener('submit', async (e) => {
         throw new Error('Label, username and password are all required.');
       }
       await request('POST', '/credentials', { bank: bankEl.value, label, username, password });
-      showStatus('success', `${BANK_NAMES[bankEl.value]} login “${label}” saved.`);
+      showStatus('success', `${bankName(bankEl.value)} login “${label}” saved.`);
     }
     resetForm();
     await load();
@@ -161,7 +169,7 @@ listEl.addEventListener('click', async (e) => {
   if (!removeId) return;
 
   const login = logins.find((l) => l.id === removeId);
-  if (!login || !confirm(`Remove the ${BANK_NAMES[login.bank]} login “${login.label}”?`)) return;
+  if (!login || !confirm(`Remove the ${bankName(login.bank)} login “${login.label}”?`)) return;
   try {
     await request('DELETE', `/credentials/${removeId}`);
     if (editingId === removeId) resetForm();

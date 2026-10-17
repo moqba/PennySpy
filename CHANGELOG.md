@@ -3,6 +3,37 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.9.0] - 2026-10-17
+
+### Added
+
+- Sign-in, code check and export run as background jobs. `POST /<bank>/login/jobs`,
+  `POST /<bank>/verify/jobs` and `POST /<bank>/export` answer at once with a job id; the job is
+  followed on `GET /jobs/{id}` or as server-sent events on `GET /jobs/{id}/events`, and a finished
+  export's files download from `GET /exports/{id}/file`. The Wealthsimple page works this way: its
+  spinner shows the current step, the elapsed time and what the browser is doing, and a dropped
+  connection no longer loses an export. The blocking `/login`, `/verify` and `/scrape` still work.
+- National Bank (NBC) exporter. The NBC page signs in with a saved login, shows where NBC sent
+  the one-time code ("NBC sent a 6-digit code by email to j...e@…"), and reads the Transaction
+  history tab back to the date you pick, up to 12 months. You get one CSV per account, named
+  after it, e.g. `chequing_account_2026-10-17.csv`. A wrong code can be typed again without
+  starting over. The endpoints are `/nbc/login`, `/nbc/verify` and `/nbc/export`, as for
+  Wealthsimple; see the [NBC setup guide](pennyspy/scrapers/nbc/setup.md).
+
+### Fixed
+
+- Wealthsimple's "Check your trusted device" page, shown after the password or the code when the
+  login comes from a new place, no longer stalls the login. The page says Wealthsimple is waiting
+  for you to tap **Yes** in its app on your phone, and the download goes ahead as soon as you do.
+  Before, the scraper could click the page's "Try another way" as if it were the passkey challenge.
+
+### Removed
+
+- RBC, Scotiabank and BMO are decommissioned. Their scrapers, pages and `/rbc`, `/scotia` and
+  `/bmo` endpoints are gone, along with their `PENNYSPY_*` env variables. The landing page
+  lists them in a small greyed-out **Decommissioned** area at the bottom. Logins already saved
+  for them still show on the Logins page so they can be removed, but no new ones can be added.
+
 ## [0.8.0] - 2026-10-13
 
 ### Added

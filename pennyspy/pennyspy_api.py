@@ -3,7 +3,7 @@ import logging
 import os
 import pathlib
 import tomllib
-from datetime import date, datetime
+from datetime import date
 from importlib.metadata import PackageNotFoundError, version
 from logging import getLogger
 from typing import Any, Final, Literal
@@ -21,14 +21,12 @@ from pydantic import BaseModel, field_validator
 
 from pennyspy.credentials.router import create_credentials_router
 from pennyspy.credentials.store import CredentialStore
+from pennyspy.jobs.manager import JobManager
+from pennyspy.jobs.router import create_exports_router, create_jobs_router
 from pennyspy.logging_setup import setup_logging
 from pennyspy.request_log import ResponseDeliveryLogger
-from pennyspy.scrapers.bmo_bank.bmo_bank import BMOBank
-from pennyspy.scrapers.bmo_bank.request_options import AppType, StatementDate
-from pennyspy.scrapers.rbc_bank.rbc_bank import RBCBank
-from pennyspy.scrapers.rbc_bank.request_options import AccountInfo, Include, Software
-from pennyspy.scrapers.router import LoginParams, create_scraper_router
-from pennyspy.scrapers.scotiabank.scotiabank import ScotiaBank
+from pennyspy.scrapers.nbc.nbc import NationalBank
+from pennyspy.scrapers.router import create_scraper_router
 from pennyspy.scrapers.session import ScraperSessionManager
 from pennyspy.scrapers.wealthsimple.wealthsimple import Wealthsimple
 from pennyspy.version_check import get_latest_tag_version, get_release_notes, is_newer_version
@@ -38,42 +36,6 @@ LOG_DIR = LOG_FILE.parent
 logger = getLogger(__name__)
 
 # ── Per-bank parameter models ─────────────────────────────────────────
-
-
-class BmoLoginParams(LoginParams):
-    account_uuids: list[str]
-
-    @field_validator("account_uuids", mode="before")
-    @classmethod
-    def _coerce_account_uuids(cls, value: object) -> list[str]:
-        # Accept a single string for backward compatibility with older clients.
-        raw = [value] if isinstance(value, str) else value
-        if not isinstance(raw, (list, tuple)):
-            raise ValueError("account_uuids must be a string or a list of strings")
-        cleaned = [str(item).strip() for item in raw if str(item).strip()]
-        if not cleaned:
-            raise ValueError("At least one account UUID is required")
-        return cleaned
-
-
-class BmoScrapeParams(BaseModel):
-    session_id: str
-    app_type: AppType
-    statement_date: StatementDate | None = None
-    from_date: datetime | None = None
-
-
-class RbcScrapeParams(BaseModel):
-    session_id: str
-    software: Software
-    account_info: AccountInfo
-    include: Include
-
-
-class ScotiaScrapeParams(BaseModel):
-    session_id: str
-    from_date: date
-    to_date: date
 
 
 class WsScrapeParams(BaseModel):
@@ -100,6 +62,13 @@ class WsScrapeParams(BaseModel):
         return [str(item).strip() for item in raw if str(item).strip()]
 
 
+class NbcScrapeParams(BaseModel):
+    """NBC's transaction history from ``since_date`` to today, one CSV per account."""
+
+    session_id: str
+    since_date: date
+
+
 # ── App setup ─────────────────────────────────────────────────────────
 
 app = FastAPI()
@@ -113,6 +82,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 session_manager = ScraperSessionManager(ttl_seconds=600)
 credential_store = CredentialStore()
+job_manager = JobManager()
 
 
 def _get_package_version() -> str:
@@ -133,53 +103,33 @@ def _get_package_version() -> str:
 
 app.include_router(
     create_scraper_router(
-        bank="bmo",
-        scraper_type=BMOBank,
-        login_params_model=BmoLoginParams,
-        scrape_params_model=BmoScrapeParams,
-        session_manager=session_manager,
-        credential_store=credential_store,
-    ),
-    prefix="/bmo",
-    tags=["BMO"],
-)
-
-app.include_router(
-    create_scraper_router(
-        bank="rbc",
-        scraper_type=RBCBank,
-        scrape_params_model=RbcScrapeParams,
-        session_manager=session_manager,
-        credential_store=credential_store,
-    ),
-    prefix="/rbc",
-    tags=["RBC"],
-)
-
-app.include_router(
-    create_scraper_router(
-        bank="scotia",
-        scraper_type=ScotiaBank,
-        scrape_params_model=ScotiaScrapeParams,
-        session_manager=session_manager,
-        credential_store=credential_store,
-    ),
-    prefix="/scotia",
-    tags=["Scotiabank"],
-)
-
-
-app.include_router(
-    create_scraper_router(
         bank="ws",
         scraper_type=Wealthsimple,
         scrape_params_model=WsScrapeParams,
         session_manager=session_manager,
         credential_store=credential_store,
+        job_manager=job_manager,
+        display_name="Wealthsimple",
     ),
     prefix="/ws",
     tags=["Wealthsimple"],
 )
+
+app.include_router(
+    create_scraper_router(
+        bank="nbc",
+        scraper_type=NationalBank,
+        scrape_params_model=NbcScrapeParams,
+        session_manager=session_manager,
+        credential_store=credential_store,
+        job_manager=job_manager,
+        display_name="NBC",
+    ),
+    prefix="/nbc",
+    tags=["National Bank"],
+)
+app.include_router(create_jobs_router(job_manager), prefix="/jobs", tags=["Jobs"])
+app.include_router(create_exports_router(job_manager), prefix="/exports", tags=["Jobs"])
 
 app.include_router(
     create_credentials_router(credential_store),

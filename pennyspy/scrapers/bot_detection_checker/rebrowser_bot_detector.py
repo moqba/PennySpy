@@ -2,7 +2,7 @@ import json
 from logging import getLogger
 
 from pennyspy.scrapers.bot_detection_checker.bot_detection_checker import BotDetectionChecker
-from pennyspy.scrapers.rbc_bank.delay_seconds import DelaySeconds
+from pennyspy.scrapers.wealthsimple.delay_seconds import DelaySeconds
 from pennyspy.scrapers.zen_scraper import By, ZenScraper
 
 logger = getLogger(__name__)
