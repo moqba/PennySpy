@@ -19,7 +19,10 @@ from typing import Final
 
 logger = logging.getLogger(__name__)
 
-CSV_COLUMNS: Final[tuple[str, ...]] = ("date", "description", "category", "amount", "account")
+CSV_COLUMNS: Final[tuple[str, ...]] = ("date", "description", "category", "amount", "account", "status")
+
+# What the date cell says on a pending row, which has no date yet ("En attente" on a French profile).
+_PENDING_LABELS: Final[frozenset[str]] = frozenset({"pending", "en attente"})
 
 # "Last 12 months" reaches about this far back; an older since_date cannot be covered.
 TWELVE_MONTHS: Final[timedelta] = timedelta(days=365)
@@ -44,6 +47,8 @@ class Transaction:
     category: str
     amount: Decimal
     account: str
+    # A pending row has no date on the page yet; it is dated the day of the export instead.
+    pending: bool = False
 
 
 def parse_date(text: str, *, today: date) -> date:
@@ -101,14 +106,16 @@ def parse_rows(rows: Iterable[Mapping[str, object]], *, today: date) -> list[Tra
         credit, debit = bool(row.get("credit")), bool(row.get("debit"))
         if not credit and not debit:
             unmarked += 1
+        pending = is_pending(row)
         try:
             transactions.append(
                 Transaction(
-                    date=parse_date(str(row.get("date") or ""), today=today),
+                    date=today if pending else parse_date(str(row.get("date") or ""), today=today),
                     description=_clean(row.get("description")),
                     category=_clean(row.get("category")),
                     amount=parse_amount(str(row.get("amount") or ""), credit=credit, debit=debit),
                     account=_clean(row.get("account")),
+                    pending=pending,
                 )
             )
         except TransactionParseError as e:
@@ -116,6 +123,12 @@ def parse_rows(rows: Iterable[Mapping[str, object]], *, today: date) -> list[Tra
     if unmarked:
         logger.warning("%d NBC row(s) had neither is-credit nor is-debit; their sign comes from the text", unmarked)
     return transactions
+
+
+def is_pending(row: Mapping[str, object]) -> bool:
+    """Whether a row is a pending transaction: the page marks it with ``transactions-table__pending``
+    in the date cell, which then reads "Pending" (or "En attente") instead of a date."""
+    return bool(row.get("pending")) or _clean(row.get("date")).lower() in _PENDING_LABELS
 
 
 def keep_since(transactions: Iterable[Transaction], since: date) -> list[Transaction]:
@@ -129,7 +142,7 @@ def coverage_note(transactions: Iterable[Transaction], since: date, *, reached_s
     ``reached_since`` is whether the table was read until a row older than ``since`` showed up.
     When it was not, the rows may stop short: either NBC has nothing older in its 12-month view,
     or the table stopped loading, and the page cannot tell which."""
-    dates = [t.date for t in transactions]
+    dates = [t.date for t in transactions if not t.pending]
     if reached_since or not dates:
         return None
     oldest = min(dates)
@@ -176,7 +189,16 @@ def write_account_csvs(transactions: Iterable[Transaction], directory: Path, *, 
             writer = csv.writer(handle)
             writer.writerow(CSV_COLUMNS)
             for row in rows:
-                writer.writerow([row.date.isoformat(), row.description, row.category, f"{row.amount:.2f}", row.account])
+                writer.writerow(
+                    [
+                        row.date.isoformat(),
+                        row.description,
+                        row.category,
+                        f"{row.amount:.2f}",
+                        row.account,
+                        "pending" if row.pending else "posted",
+                    ]
+                )
         logger.info("Wrote %d NBC transaction(s) for %s to %s", len(rows), account, path.name)
         paths.append(path)
     return paths

@@ -197,7 +197,9 @@ Group the kept rows by the **Account** cell text and write one CSV per account:
   - `date`: the date of the export (`YYYY-MM-DD`).
 - If two accounts slug to the same name, add a numeric suffix (`_2`) and log a warning.
 - Columns: `date,description,category,amount`, plus `account` so a file still makes sense on
-  its own. Rows stay newest first.
+  its own, and `status` (`posted` or `pending`). Rows stay newest first.
+- A pending row has no date yet: its date cell holds `.transactions-table__pending` ("Pending",
+  or "En attente" in French). It is kept, dated the day of the export, with status `pending`.
 - Return the files the way the WS multi-file export does:
   `{"files": [{"filename": ..., "content_base64": ...}]}`.
 

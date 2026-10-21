@@ -3,6 +3,29 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.9.1] - 2026-10-20
+
+### Added
+
+- NBC: pending transactions are exported. They have no date on the page yet ("Pending" or
+  "En attente"), so they are dated the day of the export. Each CSV has a new last column,
+  `status`, which is `posted` or `pending`.
+- NBC: if the files start later than the date you picked, the export's `notes` say from when,
+  and the NBC and Wealthsimple pages show them beside the downloads.
+
+### Fixed
+
+- NBC: after "show more" or a scroll, the export waits for the table to start loading before
+  deciding it has nothing more, so a slow page no longer cuts the export short.
+- NBC: an amount with a French decimal comma ("1 234,56 $") is refused instead of read as
+  123456. The NBC profile must be set to English.
+- Jobs: export jobs are kept as long as their files (7 days), so `/exports/{id}/file` keeps
+  working; other jobs still go after an hour.
+- Jobs: a verify or export queued behind a newer login fails with a clear 404 instead of driving
+  a closed browser.
+- Jobs: the blocking `/login`, `/verify` and `/scrape` stop waiting after an hour (504) while the
+  job carries on.
+
 ## [0.9.0] - 2026-10-17
 
 ### Added
@@ -17,9 +40,8 @@ must have a matching `## [x.y.z]` section before merging to `main`.
   the one-time code ("NBC sent a 6-digit code by email to j...e@…"), and reads the Transaction
   history tab back to the date you pick, up to 12 months. You get one CSV per account, named
   after it, e.g. `chequing_account_2026-10-17.csv`. A wrong code can be typed again without
-  starting over. If the files start later than the date you picked, the page says from when. The
-  NBC profile must be set to English. The endpoints are `/nbc/login`, `/nbc/verify` and
-  `/nbc/export`, as for Wealthsimple; see the [NBC setup guide](pennyspy/scrapers/nbc/setup.md).
+  starting over. The endpoints are `/nbc/login`, `/nbc/verify` and `/nbc/export`, as for
+  Wealthsimple; see the [NBC setup guide](pennyspy/scrapers/nbc/setup.md).
 
 ### Fixed
 

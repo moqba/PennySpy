@@ -66,7 +66,8 @@ _BACK_TO_SIGN_IN_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 # Reads every row of the transaction table as plain strings. The direction of an amount is
-# only in the class of its <p> (is-credit / is-debit), so the classes are read too. Returned
+# only in the class of its <p> (is-credit / is-debit), so the classes are read too, and so is
+# the marker of a pending row, whose date cell holds "Pending" instead of a date. Returned
 # as JSON text: CDP hands back a string intact, whereas nested objects need extra plumbing.
 _ROWS_SCRIPT: Final[str] = f"""
 const text = (row, selector) => {{
@@ -85,6 +86,7 @@ return JSON.stringify(rows.map((row) => {{
     amount: amount ? amount.textContent.trim() : '',
     credit: !!amount && amount.classList.contains('is-credit'),
     debit: !!amount && amount.classList.contains('is-debit'),
+    pending: !!row.querySelector('.transactions-table__pending'),
   }};
 }}));
 """
