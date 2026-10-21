@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import threading
 import time
+from collections.abc import Iterator
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +17,9 @@ from fastapi.testclient import TestClient
 from pydantic import BaseModel
 
 from pennyspy.credentials.store import CredentialStore
-from pennyspy.jobs.manager import JobManager
+from pennyspy.jobs.manager import FINISHED_JOB_TTL_SECONDS, Job, JobManager
 from pennyspy.jobs.router import create_exports_router, create_jobs_router
+from pennyspy.scrapers import router as scraper_router
 from pennyspy.scrapers.base import AuthStep, BankScraperInterface
 from pennyspy.scrapers.router import create_scraper_router
 from pennyspy.scrapers.session import ScraperSessionManager
@@ -27,9 +31,13 @@ class _ScrapeParams(BaseModel):
     session_id: str
     file_count: int = 1
     fail: bool = False
+    note: str | None = None
 
 
 class _FakeScraper(BankScraperInterface):
+    def __init__(self) -> None:
+        self._notes: list[str] = []
+
     def start_auth(self, **kwargs: Any) -> AuthStep:
         _scraper_logger.info("Typing the redacted login into the fake bank")
         return AuthStep(status="needs_otp", message="Enter the code")
@@ -43,9 +51,10 @@ class _FakeScraper(BankScraperInterface):
         raise NotImplementedError
 
     def download_transaction_files(
-        self, *, export_directory: Path, file_count: int = 1, fail: bool = False, **kwargs: Any
+        self, *, export_directory: Path, file_count: int = 1, fail: bool = False, note: str | None = None, **kwargs: Any
     ) -> list[Path]:
         _scraper_logger.info("Downloading %d fake export(s)", file_count)
+        self._notes = [note] if note else []
         if fail:
             raise RuntimeError("The export button never appeared")
         files = []
@@ -54,6 +63,9 @@ class _FakeScraper(BankScraperInterface):
             path.write_bytes(f"date,amount\n2026-10-0{index + 1},{index}\n".encode())
             files.append(path)
         return files
+
+    def export_notes(self) -> list[str]:
+        return list(self._notes)
 
     def quit(self) -> None:
         pass
@@ -66,12 +78,13 @@ def _info_logs(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.fixture
-def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
+def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[TestClient]:
     monkeypatch.setenv("PENNYSPY_EXPORT_DIR", str(tmp_path / "exports"))
     monkeypatch.setenv("PENNYSPY_WSU", "env-user")
     monkeypatch.setenv("PENNYSPY_WSP", "env-pass")
     manager = JobManager()
     app = FastAPI()
+    app.state.job_manager = manager
     app.include_router(
         create_scraper_router(
             bank="ws",
@@ -86,7 +99,8 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     )
     app.include_router(create_jobs_router(manager), prefix="/jobs")
     app.include_router(create_exports_router(manager), prefix="/exports")
-    return TestClient(app)
+    yield TestClient(app)
+    manager.close()
 
 
 def _follow(client: TestClient, job_id: str, timeout: float = 5.0) -> dict[str, Any]:
@@ -124,6 +138,17 @@ def test_login_job_reports_what_the_scraper_is_doing(client: TestClient) -> None
     assert job["session_id"]
 
 
+def _hold_worker(manager: JobManager) -> threading.Event:
+    """Keep the single worker busy until the returned event is set, so later jobs queue."""
+    release = threading.Event()
+
+    def hold(_ctx: Any) -> None:
+        release.wait(5)
+
+    manager.submit("login", "ws", hold)
+    return release
+
+
 def test_running_job_detail_comes_from_the_scraper_log(tmp_path: Path) -> None:
     manager = JobManager()
     seen: list[str] = []
@@ -137,6 +162,36 @@ def test_running_job_detail_comes_from_the_scraper_log(tmp_path: Path) -> None:
     assert job.wait(5)
     assert seen == ["Clicking the sign-in button"]
     assert job.state == "done"
+    manager.close()
+
+
+def test_close_stops_relaying_the_log() -> None:
+    root = logging.getLogger("pennyspy")
+    before = len(root.handlers)
+    manager = JobManager()
+    assert len(root.handlers) == before + 1
+    manager.close()
+    assert len(root.handlers) == before
+
+
+def test_a_job_result_cannot_stand_in_for_the_job_fields() -> None:
+    job = Job(id="j1", kind="login", bank="ws", result={"state": "done", "error": None, "session_id": "s1"})
+    snapshot = job.snapshot()
+    assert snapshot["state"] == "queued"
+    assert snapshot["job_id"] == "j1"
+    assert snapshot["session_id"] == "s1"
+
+
+def test_export_jobs_outlive_other_finished_jobs() -> None:
+    manager = JobManager()
+    finished = datetime.now(UTC) - timedelta(seconds=FINISHED_JOB_TTL_SECONDS + 60)
+    for job_id, kind in (("old-login", "login"), ("old-export", "export")):
+        manager._jobs[job_id] = Job(id=job_id, kind=kind, bank="ws", state="done", finished_at=finished)  # type: ignore[arg-type]
+    manager._prune()
+    with pytest.raises(KeyError):
+        manager.get("old-login")
+    assert manager.get("old-export").kind == "export"
+    manager.close()
 
 
 def test_export_job_then_file_download(client: TestClient) -> None:
@@ -162,6 +217,31 @@ def test_export_with_several_files_lists_each(client: TestClient) -> None:
     assert [f["index"] for f in job["files"]] == [0, 1, 2]
     assert client.get(f"/exports/{job['job_id']}/file?index=2").text.endswith("2026-10-03,2\n")
     assert client.get(f"/exports/{job['job_id']}/file?index=3").status_code == 404
+
+
+def test_export_job_carries_the_scraper_notes(client: TestClient) -> None:
+    session_id = _login_and_verify(client)
+    job = _follow(
+        client, client.post("/ws/export", json={"session_id": session_id, "note": "Starts later"}).json()["job_id"]
+    )
+    assert job["notes"] == ["Starts later"]
+
+    session_id = _login_and_verify(client)
+    assert _follow(client, client.post("/ws/export", json={"session_id": session_id}).json()["job_id"])["notes"] == []
+
+
+def test_export_queued_behind_a_newer_login_fails_cleanly(client: TestClient) -> None:
+    session_id = _login_and_verify(client)
+    release = _hold_worker(client.app.state.job_manager)  # type: ignore[attr-defined]
+    login_id = client.post("/ws/login/jobs").json()["job_id"]
+    export = client.post("/ws/export", json={"session_id": session_id})
+    assert export.status_code == 202  # the session still exists when the export is asked for
+    release.set()
+
+    assert _follow(client, login_id)["state"] == "done"
+    job = _follow(client, export.json()["job_id"])
+    assert job["state"] == "failed"
+    assert "Start the login again" in job["error"]
 
 
 def test_failed_export_reports_the_error(client: TestClient) -> None:
@@ -196,6 +276,20 @@ def test_events_stream_ends_with_the_finished_job(client: TestClient) -> None:
         events = [json.loads(line[len("data: ") :]) for line in response.iter_lines() if line.startswith("data: ")]
     assert events[-1]["state"] == "done"
     assert [e["version"] for e in events] == sorted(e["version"] for e in events)
+
+
+def test_blocking_endpoint_gives_up_waiting_but_the_job_goes_on(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(scraper_router, "BLOCKING_WAIT_SECONDS", 0)
+    release = _hold_worker(client.app.state.job_manager)  # type: ignore[attr-defined]
+    try:
+        response = client.post("/ws/login")
+    finally:
+        release.set()
+    assert response.status_code == 504
+    job_id = response.json()["detail"].split()[1]
+    assert _follow(client, job_id)["state"] == "done"
 
 
 def test_blocking_endpoints_still_work(client: TestClient) -> None:

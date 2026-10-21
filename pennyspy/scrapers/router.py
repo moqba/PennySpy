@@ -6,7 +6,7 @@ from base64 import b64encode
 from dataclasses import asdict
 from logging import getLogger
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, Final
 
 from fastapi import APIRouter, Body, HTTPException, Response
 from fastapi.responses import FileResponse, JSONResponse
@@ -20,6 +20,11 @@ from pennyspy.scrapers.export_store import prune_exports, retain_exports
 from pennyspy.scrapers.session import ScraperSessionManager
 
 logger = getLogger(__name__)
+
+# How long the blocking /login, /verify and /scrape wait for their job. Generous on purpose:
+# it only stops a hung browser from holding a server thread forever. The job itself keeps
+# running and can still be followed on /jobs/{id}.
+BLOCKING_WAIT_SECONDS: Final[int] = 60 * 60
 
 
 class LoginParams(BaseModel):
@@ -70,11 +75,24 @@ def create_scraper_router(
         except KeyError as e:
             raise HTTPException(status_code=404, detail=str(e))
 
+    def _job_scraper(session_id: str) -> BankScraperInterface:
+        """The session's scraper, looked up again when the job runs: a login queued ahead of
+        this job closes every earlier session."""
+        try:
+            return session_manager.get(session_id, expected_type=scraper_type)
+        except KeyError as e:
+            raise JobFailed(f"{e.args[0]}; a newer login may have closed it. Start the login again.", 404) from e
+
     def _accepted(job: Job) -> JSONResponse:
         return JSONResponse(status_code=202, content=job.snapshot())
 
     def _wait(job: Job) -> Job:
-        job.wait()
+        if not job.wait(BLOCKING_WAIT_SECONDS):
+            raise HTTPException(
+                status_code=504,
+                detail=f"Job {job.id} is still running after {BLOCKING_WAIT_SECONDS // 60} minutes; "
+                f"follow it on /jobs/{job.id}",
+            )
         if job.state == "failed":
             raise HTTPException(status_code=job.error_status or 500, detail=job.error)
         return job
@@ -136,9 +154,11 @@ def create_scraper_router(
     # ── Verify ────────────────────────────────────────────────────────
 
     def start_verify(params: VerifyParams) -> Job:
-        scraper = _get_scraper(params.session_id)
+        # Checked here too, so an unknown session is a 404 on this request rather than a job.
+        _get_scraper(params.session_id)
 
         def run(ctx: JobContext) -> None:
+            scraper = _job_scraper(params.session_id)
             ctx.stage("Checking the code" if params.otp_code else f"Checking the {name} session")
             try:
                 step = scraper.continue_auth(otp_code=params.otp_code)
@@ -163,9 +183,10 @@ def create_scraper_router(
     def start_export(params: BaseModel) -> Job:
         scrape_kwargs: dict[str, Any] = params.model_dump()
         session_id: str = scrape_kwargs.pop("session_id")
-        scraper = _get_scraper(session_id)
+        _get_scraper(session_id)
 
         def run(ctx: JobContext) -> None:
+            scraper = _job_scraper(session_id)
             ctx.stage(f"Exporting from {name}")
             ctx.job.files = run_export(ctx.job, scraper, session_id, scrape_kwargs)
 
@@ -203,6 +224,8 @@ def create_scraper_router(
                 detail = f"Transaction file was not created: {', '.join(path.name for path in missing)}"
             raise JobFailed(detail, status_code=404)
 
+        # Such as an export that starts later than asked; the page shows these with the files.
+        job.result["notes"] = scraper.export_notes()
         logger.info("Export ready for job %s: %s", job.id, ", ".join(path.name for path in transaction_files))
         retained = retain_exports(transaction_files, session_id)
         if retained is None:

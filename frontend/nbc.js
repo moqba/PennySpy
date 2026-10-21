@@ -184,7 +184,7 @@ fetchBtn.addEventListener('click', async () => {
 
     diag.stage = 'done';
     diag.totalElapsedMs = Math.round(performance.now() - startedMs);
-    showStatus('success', PennyJobs.describeSaved(files, 'Transactions'));
+    showStatus('success', PennyJobs.describeSaved(files, 'Transactions', exportJob.notes));
     reportToServer('info', `nbc export delivered ${files.length} file(s)`, diag);
     resetFlow();
   } catch (err) {

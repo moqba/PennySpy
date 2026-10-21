@@ -70,6 +70,11 @@ class BankScraperInterface(ABC):
         """
         return [self.download_transactions(export_directory=export_directory, **kwargs)]
 
+    def export_notes(self) -> list[str]:
+        """What the caller should know about the files the last download produced, such as
+        that they cover less than was asked for. Shown beside the files; empty by default."""
+        return []
+
     @abstractmethod
     def quit(self) -> None:
         """Tear down the browser and release resources."""

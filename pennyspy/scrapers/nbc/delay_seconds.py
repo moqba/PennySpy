@@ -22,6 +22,9 @@ class DelaySeconds(IntEnum):
     # The transaction table counts as loaded once its row count has stayed the same this long
     # with no spinner on screen.
     TABLE_SETTLE = 3
+    # How long "show more" or a scroll is given to start loading rows (count up or spinner
+    # shown) before the table is taken to hold everything it has.
+    LOAD_MORE_START = 20
     # Cap on "show more" clicks or scroll rounds while reading the table, whichever applies.
     MAX_LOAD_MORE_ROUNDS = 200
     SIGN_OUT = 10

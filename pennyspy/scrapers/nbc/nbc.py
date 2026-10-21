@@ -11,7 +11,7 @@ import json
 import logging
 import time
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -30,7 +30,9 @@ from pennyspy.scrapers.nbc.delay_seconds import DelaySeconds
 from pennyspy.scrapers.nbc.otp_notice import FALLBACK as OTP_FALLBACK
 from pennyspy.scrapers.nbc.otp_notice import describe_otp
 from pennyspy.scrapers.nbc.transactions import (
+    TWELVE_MONTHS,
     TransactionParseError,
+    coverage_note,
     keep_since,
     parse_date,
     parse_rows,
@@ -51,9 +53,6 @@ NBC_ENTRY: Final[str] = "https://connexion.bnc.ca/"
 NBC_APP: Final[str] = "https://app.bnc.ca/"
 NBC_ACCOUNTS: Final[str] = f"{NBC_APP}accounts"
 
-# "Last 12 months" reaches about this far back; an older since_date cannot be covered.
-_TWELVE_MONTHS: Final[timedelta] = timedelta(days=365)
-
 # What the sign-in form shows when it turns the login down, most specific first.
 _LOGIN_ERROR_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
     (By.XPATH, ConnectionElementXpath.LOGIN_ERROR_IN_FORM),
@@ -67,7 +66,8 @@ _BACK_TO_SIGN_IN_LOCATORS: Final[tuple[tuple[str, str], ...]] = (
 )
 
 # Reads every row of the transaction table as plain strings. The direction of an amount is
-# only in the class of its <p> (is-credit / is-debit), so the classes are read too. Returned
+# only in the class of its <p> (is-credit / is-debit), so the classes are read too, and so is
+# the marker of a pending row, whose date cell holds "Pending" instead of a date. Returned
 # as JSON text: CDP hands back a string intact, whereas nested objects need extra plumbing.
 _ROWS_SCRIPT: Final[str] = f"""
 const text = (row, selector) => {{
@@ -86,6 +86,7 @@ return JSON.stringify(rows.map((row) => {{
     amount: amount ? amount.textContent.trim() : '',
     credit: !!amount && amount.classList.contains('is-credit'),
     debit: !!amount && amount.classList.contains('is-debit'),
+    pending: !!row.querySelector('.transactions-table__pending'),
   }};
 }}));
 """
@@ -108,6 +109,7 @@ class NationalBank(ZenBankScraper):
     def __init__(self, config: BrowserConfig = BrowserConfig()):
         super().__init__(config=config)
         self._authenticated: bool = False
+        self._export_notes: list[str] = []
 
     # ── BankScraper interface ──────────────────────────────────────────
 
@@ -151,14 +153,15 @@ class NationalBank(ZenBankScraper):
         The history tab is set to "Last 12 months" and read until a row older than
         ``since_date`` shows up (or the table has nothing more to load). An older
         ``since_date`` than 12 months back is accepted, but the files then start at the
-        oldest row NBC shows."""
+        oldest row NBC shows, and :meth:`export_notes` says so."""
+        self._export_notes = []
         since = _as_date(kwargs.get("since_date"))
         if since is None:
             raise ValueError("since_date is required for the NBC export")
         today = date.today()
         if since > today:
             raise ValueError(f"since_date {since.isoformat()} is in the future")
-        if since < today - _TWELVE_MONTHS:
+        if since < today - TWELVE_MONTHS:
             logger.warning(
                 "since_date %s is more than 12 months back; NBC's 'Last 12 months' view starts later, "
                 "so the export starts at the oldest row it shows",
@@ -168,7 +171,7 @@ class NationalBank(ZenBankScraper):
         try:
             self._open_transaction_history()
             self._show_last_12_months()
-            rows = self._read_rows_back_to(since, today=today)
+            rows, reached_since = self._read_rows_back_to(since, today=today)
         finally:
             self._sign_out()
 
@@ -179,11 +182,18 @@ class NationalBank(ZenBankScraper):
         logger.info("%d of %d NBC row(s) are on or after %s", len(transactions), len(rows), since.isoformat())
         if not transactions:
             raise ValueError(f"NBC shows no transactions on or after {since.isoformat()}")
+        note = coverage_note(transactions, since, reached_since=reached_since, today=today)
+        if note:
+            logger.warning("%s", note)
+            self._export_notes.append(note)
 
         export_directory = Path(export_directory)
         files = write_account_csvs(transactions, export_directory, export_date=today)
         logger.info("Returning %d NBC file(s): %s", len(files), ", ".join(path.name for path in files))
         return files
+
+    def export_notes(self) -> list[str]:
+        return list(self._export_notes)
 
     def download_transactions(self, *, export_directory: Path, **kwargs: Any) -> Path:
         """Single-file view of the export, for callers bound to one path: the per-account
@@ -451,12 +461,13 @@ class NationalBank(ZenBankScraper):
             raise ScraperError("Failed while reading the rows of the NBC transaction table") from e
         return list(rows)
 
-    def _read_rows_back_to(self, since: date, *, today: date) -> list[dict[str, Any]]:
+    def _read_rows_back_to(self, since: date, *, today: date) -> tuple[list[dict[str, Any]], bool]:
         """Read the table, loading more rows until one is older than ``since`` or none come.
 
-        The saved page showed no paging, so both of the likely kinds are handled: a "show
-        more" button is clicked, and failing that the page is scrolled to the bottom in case
-        it loads more as it goes."""
+        Returns the rows, and whether a row older than ``since`` was reached (otherwise the
+        rows may start after ``since``). The saved page showed no paging, so both of the likely
+        kinds are handled: a "show more" button is clicked, and failing that the page is
+        scrolled to the bottom in case it loads more as it goes."""
         rows = self._read_rows()
         for round_number in range(1, DelaySeconds.MAX_LOAD_MORE_ROUNDS + 1):
             oldest = _oldest_date(rows, today=today)
@@ -468,7 +479,7 @@ class NationalBank(ZenBankScraper):
             )
             if oldest is not None and oldest < since:
                 logger.info("The NBC table reaches past %s — no more rows needed", since.isoformat())
-                return rows
+                return rows, True
             load_more = self._first_displayed_match(((By.XPATH, AccountsElementXpath.LOAD_MORE),))
             if load_more is not None:
                 self._click("load more NBC transactions", load_more[1])
@@ -476,17 +487,39 @@ class NationalBank(ZenBankScraper):
                 logger.info("No 'show more' button under the NBC table; scrolling to the bottom")
                 self.driver.execute_script(_SCROLL_TO_BOTTOM_SCRIPT)
             before = len(rows)
+            if not self._more_rows_started(before):
+                logger.info("The NBC table loaded nothing more; it holds %d row(s)", before)
+                return rows, False
             self._wait_for_table("load more NBC transactions")
             rows = self._read_rows()
             if len(rows) <= before:
                 logger.info("The NBC table loaded nothing more; it holds %d row(s)", len(rows))
-                return rows
+                return rows, False
         logger.warning(
             "Stopped loading NBC transactions after %d rounds with %d row(s)",
             DelaySeconds.MAX_LOAD_MORE_ROUNDS,
             len(rows),
         )
-        return rows
+        return rows, False
+
+    def _more_rows_started(self, before: int) -> bool:
+        """Whether, after "show more" or a scroll, the table starts loading: its row count rises
+        past ``before`` or its spinner shows. Without this, a slow first response would look
+        like a table that had settled with nothing more to give."""
+        try:
+            self._wait_until(
+                "see the NBC table start loading more rows",
+                lambda _driver: (
+                    self._row_count() > before
+                    or self._first_displayed_match(((By.CSS_SELECTOR, TransactionsCss.LOADING),)) is not None
+                    or None
+                ),
+                DelaySeconds.LOAD_MORE_START,
+                timeout_log_level=logging.INFO,
+            )
+        except TimeoutException:
+            return False
+        return True
 
     def _sign_out(self) -> None:
         """Sign out of NBC. Best effort: the browser is closed right after either way."""

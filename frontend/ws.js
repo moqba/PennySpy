@@ -232,7 +232,7 @@ fetchBtn.addEventListener('click', async () => {
 
     diag.stage = 'done';
     diag.totalElapsedMs = Math.round(performance.now() - startedMs);
-    showStatus('success', PennyJobs.describeSaved(files, request.label));
+    showStatus('success', PennyJobs.describeSaved(files, request.label, exportJob.notes));
     reportToServer('info', `export delivered ${files.length} file(s)`, diag);
     resetFlow();
   } catch (err) {

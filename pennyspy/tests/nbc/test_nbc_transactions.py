@@ -13,6 +13,7 @@ from pennyspy.scrapers.nbc.transactions import (
     CSV_COLUMNS,
     TransactionParseError,
     account_slug,
+    coverage_note,
     keep_since,
     parse_amount,
     parse_date,
@@ -86,6 +87,33 @@ def test_parse_amount_rejects_what_it_cannot_read() -> None:
         parse_amount("pending", credit=True, debit=False)
 
 
+@pytest.mark.parametrize("text", ["1 234,56 $", "12,50 $", "-7,25"])
+def test_parse_amount_refuses_a_decimal_comma(text: str) -> None:
+    with pytest.raises(TransactionParseError, match="English"):
+        parse_amount(text, credit=True, debit=False)
+
+
+def test_coverage_note_is_silent_when_the_table_reached_since_date() -> None:
+    transactions = parse_rows(ROWS, today=TODAY)
+    assert coverage_note(transactions, date(2026, 9, 1), reached_since=True, today=TODAY) is None
+    # Not reached, but the rows still go back to since_date itself.
+    assert coverage_note(transactions, date(2026, 9, 30), reached_since=False, today=TODAY) is None
+
+
+def test_coverage_note_says_where_a_short_export_starts() -> None:
+    transactions = parse_rows(ROWS, today=TODAY)
+    note = coverage_note(transactions, date(2026, 9, 1), reached_since=False, today=TODAY)
+    assert note is not None
+    assert "starts at 2026-09-30, not 2026-09-01" in note
+    assert "stopped loading" in note
+
+
+def test_coverage_note_past_twelve_months() -> None:
+    transactions = parse_rows(ROWS, today=TODAY)
+    note = coverage_note(transactions, date(2025, 1, 1), reached_since=False, today=TODAY)
+    assert note == "NBC only shows the last 12 months, so the export starts at 2026-09-30, not 2025-01-01."
+
+
 def test_parse_rows_names_the_row_that_failed() -> None:
     with pytest.raises(TransactionParseError, match="Row 2"):
         parse_rows([ROWS[0], _row("soon", "Chequing Account", "$1.00")], today=TODAY)
@@ -127,11 +155,11 @@ def test_one_csv_per_account(tmp_path: Path) -> None:
     chequing = _read(paths[0])
     assert chequing[0] == list(CSV_COLUMNS)
     assert chequing[1:] == [
-        ["2026-10-14", "Payment", "Transfer", "400.00", "Chequing Account"],
-        ["2026-10-08", "Fixed monthly fees", "Transfer", "-12.50", "Chequing Account"],
+        ["2026-10-14", "Payment", "Transfer", "400.00", "Chequing Account", "posted"],
+        ["2026-10-08", "Fixed monthly fees", "Transfer", "-12.50", "Chequing Account", "posted"],
     ]
     assert _read(paths[1])[1:] == [
-        ["2026-10-13", "Payment", "Transfer", "5000.00", "High Interest Savings Account"],
+        ["2026-10-13", "Payment", "Transfer", "5000.00", "High Interest Savings Account", "posted"],
     ]
 
 
@@ -142,3 +170,29 @@ def test_accounts_that_slug_alike_get_their_own_files(tmp_path: Path) -> None:
     ]
     paths = write_account_csvs(parse_rows(rows, today=TODAY), tmp_path, export_date=TODAY)
     assert [p.name for p in paths] == ["chequing_account_2026-10-17.csv", "chequing_account_2_2026-10-17.csv"]
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {**_row("", "Mastercard World Elite", "$15.80", debit=True, description="Noctis"), "pending": True},
+        _row("Pending", "Mastercard World Elite", "$15.80", debit=True, description="Noctis"),
+        _row("En attente", "Mastercard World Elite", "$15.80", debit=True, description="Noctis"),
+    ],
+)
+def test_a_pending_row_without_a_date_is_dated_the_export_day(row: dict, tmp_path: Path) -> None:
+    transactions = keep_since(parse_rows([row, *ROWS], today=TODAY), date(2026, 10, 1))
+    assert transactions[0].pending
+    assert transactions[0].date == TODAY
+    assert not any(t.pending for t in transactions[1:])
+
+    paths = write_account_csvs(transactions, tmp_path, export_date=TODAY)
+    assert _read(paths[0])[1:] == [["2026-10-17", "Noctis", "Transfer", "-15.80", "Mastercard World Elite", "pending"]]
+
+
+def test_a_pending_row_does_not_hide_a_short_export() -> None:
+    pending = {**_row("", "Mastercard World Elite", "$15.80", debit=True), "pending": True}
+    transactions = parse_rows([pending, ROWS[0]], today=TODAY)
+    note = coverage_note(transactions, date(2026, 10, 1), reached_since=False, today=TODAY)
+    assert note is not None
+    assert "starts at 2026-10-14" in note

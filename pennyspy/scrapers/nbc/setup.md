@@ -11,6 +11,11 @@ Add your NBC login (email ID and password) on the **Logins** page of the web UI
 save several and pick one on the NBC page. See [Bank logins](../../../README.md#bank-logins).
 NBC has no env-variable fallback.
 
+## Language
+Keep the NBC profile language set to **English**. The transaction table is read as NBC renders
+it, and French dates ("14 octobre 2026") and amounts ("1 234,56 $") are refused rather than
+guessed at, so the export fails with a message saying so.
+
 ## NBC API
 
 The flow is split across endpoints because a person has to read the code:
@@ -29,7 +34,8 @@ works this way. See [Jobs](../../../README.md#jobs).
 
 The history tab is set to **Last 12 months** and read until a row is older than `since_date`.
 A `since_date` further back than 12 months is accepted, but the files then start at the oldest
-row NBC shows. How the pages are driven is described in [scraping_flow.md](scraping_flow.md).
+row NBC shows. Whenever the files start later than `since_date`, the export job's `notes` say
+from which date, and the NBC page shows it beside the downloads. How the pages are driven is described in [scraping_flow.md](scraping_flow.md).
 
 ---
 
