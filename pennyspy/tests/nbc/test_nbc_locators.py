@@ -183,11 +183,12 @@ def _see_all_accounts(soup: BeautifulSoup) -> list:
 
 
 def _transaction_history_tab(soup: BeautifulSoup, *, selected_only: bool) -> list:
-    tab_list = _one(soup, "ul#accounts-tabs__tab-list")
+    # //*[@role="tablist"]//*[@role="tab" and normalize-space()="Transaction history"]
+    tab_list = _one(soup, '[role="tablist"]')
     return [
-        li
-        for li in tab_list.find_all("li", attrs={"role": "tab"})
-        if _text(li) == "Transaction history" and (not selected_only or li.get("aria-selected") == "true")
+        tab
+        for tab in tab_list.find_all(attrs={"role": "tab"})
+        if _text(tab) == "Transaction history" and (not selected_only or tab.get("aria-selected") == "true")
     ]
 
 
@@ -197,7 +198,7 @@ def test_the_mirrors_match_the_locators_they_stand_in_for() -> None:
     )
     assert AccountsElementXpath.SEE_ALL_ACCOUNTS == '//button[normalize-space()="See all my accounts"]'
     assert AccountsElementXpath.TRANSACTION_HISTORY_TAB == (
-        '//ul[@id="accounts-tabs__tab-list"]//li[@role="tab" and normalize-space()="Transaction history"]'
+        '//*[@role="tablist"]//*[@role="tab" and normalize-space()="Transaction history"]'
     )
 
 
@@ -211,6 +212,44 @@ def test_accounts_xpaths() -> None:
     page = _soup(ACCOUNTS)
     assert len(_transaction_history_tab(page, selected_only=False)) == 1
     assert len(_transaction_history_tab(page, selected_only=True)) == 1
+
+
+# The accounts page since November 2026: dsc-tabs buttons instead of react-tabs list items, and
+# only the selected tab's panel is rendered. Here the Accounts tab is still selected.
+ACCOUNTS_DSC_TABS = (
+    '<div class="accounts-tabs mc-mb-large"><div class="dsc-tabs is-large onBlue has-no-shadow" data-test="tabs">'
+    '<div class="dsc-tabs__navigationContainer"><div class="dsc-tabs__innerNavigation">'
+    '<div role="tablist" class="dsc-tabs__navigation">'
+    '<button id="tab-BALANCE_SHEETS_TABS-0" aria-controls="panel-BALANCE_SHEETS_TABS-0" role="tab"'
+    ' class="dsc-tabs__item is-selected" aria-selected="true" type="button">Accounts</button>'
+    '<button id="tab-BALANCE_SHEETS_TABS-1" aria-controls="panel-BALANCE_SHEETS_TABS-1" role="tab"'
+    ' class="dsc-tabs__item" aria-selected="false" type="button">Transaction history</button>'
+    '<button id="tab-BALANCE_SHEETS_TABS-2" aria-controls="panel-BALANCE_SHEETS_TABS-2" role="tab"'
+    ' class="dsc-tabs__item" aria-selected="false" type="button">'
+    '<div class="mc-d-flex"><span>Upcoming transactions</span></div></button>'
+    "</div></div></div>"
+    '<div class="dsc-tabs__content"><div class="dsc-tabs__panel" role="tabpanel" id="panel-BALANCE_SHEETS_TABS-0"'
+    ' aria-labelledby="tab-BALANCE_SHEETS_TABS-0"></div></div>'
+    "</div></div>"
+)
+
+
+def test_transaction_history_tab_on_dsc_tabs() -> None:
+    page = _soup(ACCOUNTS_DSC_TABS)
+    tabs = _transaction_history_tab(page, selected_only=False)
+    assert [t.name for t in tabs] == ["button"]
+    assert _transaction_history_tab(page, selected_only=True) == []
+    tabs[0]["aria-selected"] = "true"
+    assert len(_transaction_history_tab(page, selected_only=True)) == 1
+
+
+def test_rows_are_found_in_a_dsc_tabs_panel() -> None:
+    # The rows' own markup is assumed unchanged; only the panel around them lost its class.
+    page = _soup(
+        '<div class="dsc-tabs__panel" role="tabpanel">'
+        f'{_row("Nov 14, 2026", "Chequing Account", "$12.00", "is-credit")}</div>'
+    )
+    assert len(page.select(TransactionsCss.ROW)) == 1
 
 
 def test_is_signed_in_url() -> None:
