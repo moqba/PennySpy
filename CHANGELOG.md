@@ -3,6 +3,15 @@
 Release notes for GitHub Releases are sourced from this file. Each released version
 must have a matching `## [x.y.z]` section before merging to `main`.
 
+## [0.9.2] - 2026-11-15
+
+### Fixed
+
+- NBC: the export finds the Transaction history tab again. NBC's accounts page now draws its
+  tabs as buttons (`div[role="tablist"] > button[role="tab"]`) instead of a react-tabs list, so
+  the export stopped with "NBC's accounts page never showed the Transaction history tab". The
+  tab and the transaction rows are now matched by their ARIA roles, which both versions have.
+
 ## [0.9.1] - 2026-10-20
 
 ### Added

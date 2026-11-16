@@ -105,12 +105,15 @@ Login stops here and keeps the browser session open for verify.
    `dsc-btn is-outlined`). Match on the text, because many buttons share `data-test="button"`.
    This opens `https://app.bnc.ca/accounts`.
 2. On the accounts page, open the **Transaction history** tab:
-   - Tab list: `ul#accounts-tabs__tab-list`
-   - Tab: `li[role="tab"]` with text "Transaction history" (currently `#react-tabs-2`, but react-tabs
-     generates the ids, so match on the text)
-   - Done when the tab has `aria-selected="true"` and the panel
-     `.transactions-panel.react-tabs__tab-panel--selected` holds the heading
-     "My transaction history".
+   - Tab list: `div[role="tablist"].dsc-tabs__navigation` (until November 2026 it was
+     react-tabs' `ul#accounts-tabs__tab-list`)
+   - Tab: `button[role="tab"]` with text "Transaction history" (currently
+     `#tab-BALANCE_SHEETS_TABS-1`; it used to be `li[role="tab"]#react-tabs-2`). Match on
+     `role="tab"` and the text, not the tag or id.
+   - Done when the tab has `aria-selected="true"`. Only the selected tab's panel is rendered,
+     a `div.dsc-tabs__panel[role="tabpanel"]` (formerly
+     `.transactions-panel.react-tabs__tab-panel--selected`), so the row, spinner and
+     "load more" locators are scoped to `[role="tabpanel"]`.
 
 ## 5. Filter and scrape the transactions
 

@@ -50,17 +50,17 @@ class ConnectionElementXpath(StrEnum):
 
 class AccountsElementXpath(StrEnum):
     SEE_ALL_ACCOUNTS = '//button[normalize-space()="See all my accounts"]'
-    TRANSACTION_HISTORY_TAB = (
-        '//ul[@id="accounts-tabs__tab-list"]//li[@role="tab" and normalize-space()="Transaction history"]'
-    )
+    # NBC moved from react-tabs (``ul#accounts-tabs__tab-list > li``) to its own dsc-tabs
+    # (``div.dsc-tabs__navigation > button``) in November 2026. Both carry the ARIA roles, so
+    # match on those rather than the tag or id.
+    TRANSACTION_HISTORY_TAB = '//*[@role="tablist"]//*[@role="tab" and normalize-space()="Transaction history"]'
     SELECTED_TRANSACTION_HISTORY_TAB = (
-        '//ul[@id="accounts-tabs__tab-list"]//li[@role="tab" and @aria-selected="true"'
-        ' and normalize-space()="Transaction history"]'
+        '//*[@role="tablist"]//*[@role="tab" and @aria-selected="true" and normalize-space()="Transaction history"]'
     )
     # Paging has not been seen on the saved page; these are the labels a "load more" control
     # would most likely carry, English first.
     LOAD_MORE = (
-        '//*[contains(@class, "transactions-panel")]//button['
+        '//*[@role="tabpanel"]//button['
         'normalize-space()="Show more" or normalize-space()="Load more" or normalize-space()="See more"'
         ' or normalize-space()="Display more" or normalize-space()="View more"'
         ' or normalize-space()="Show more transactions" or normalize-space()="See more transactions"]'
@@ -69,14 +69,16 @@ class AccountsElementXpath(StrEnum):
 
 
 class TransactionsCss(StrEnum):
-    PANEL = ".transactions-panel"
+    # The old react-tabs panel had a ``transactions-panel`` class; the dsc-tabs one is a bare
+    # ``div.dsc-tabs__panel``. Only the selected tab's panel is rendered, so scope to the role.
+    PANEL = '[role="tabpanel"]'
     PERIOD = "select#filter-form__period"
     APPLY = "button#filter-form__display"
-    ROW = ".transactions-panel .transactions-history__row"
+    ROW = '[role="tabpanel"] .transactions-history__row'
     # Anything that looks like a loading indicator inside the transactions panel.
     LOADING = (
-        '.transactions-panel [class*="spinner"], .transactions-panel [class*="Spinner"],'
-        ' .transactions-panel [class*="loader"], .transactions-panel [aria-busy="true"]'
+        '[role="tabpanel"] [class*="spinner"], [role="tabpanel"] [class*="Spinner"],'
+        ' [role="tabpanel"] [class*="loader"], [role="tabpanel"] [aria-busy="true"]'
     )
 
 
